@@ -1,0 +1,15 @@
+{
+  "name": "pouchdb.next",
+  "version": "0.0.0",
+  "description": "Reference implementation for discussion around daleharvey/pouchdb/issues/1250.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Nick Thompson",
+  "license": "Apache 2.0",
+  "dependencies": {
+    "levelup": "0.18.2",
+    "extend": "1.2.1"
+  }
+}
