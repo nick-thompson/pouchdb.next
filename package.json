@@ -16,6 +16,7 @@
     "mocha": "~1.17.1",
     "memdown": "~0.6.0",
     "browserify": "~3.24.13",
-    "level-js": "~1.1.2"
+    "level-js": "~1.1.2",
+    "level-sublevel": "~5.2.0"
   }
 }

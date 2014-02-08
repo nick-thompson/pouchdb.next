@@ -1,14 +1,41 @@
 
 var levelup = require('levelup');
 var extend = require('extend');
+var sublevel = require('level-sublevel');
 
 function PouchDB(location, options) {
   // Make sure not to modify the options object by deep copying up front.
   var opts = extend(true, {}, options, { valueEncoding: 'json' });
-  // We may choose to go with level-sublevel, in which case we'll be constructing
-  // several stores here (changes, attachments, docs).
-  this._store = levelup(location, opts);
+  this._lastSeq = 0;
+  this._db = sublevel(levelup(location, opts));
+  this._changes = this._db.sublevel('changes');
+  this._attachments = this._db.sublevel('attachments');
+  this._docs = this._db.sublevel('docs');
+  // Hook into `this._db` to insert a change document on every insertion.
+  this._db.pre(function(ch, add) {
+    var change = extend(true, {}, ch.value);
+    var key = ++this._lastSeq;
+    change.seq = key;
+    add({
+      type: 'put',
+      key: key,
+      value: change,
+      prefix: this._changes
+    });
+  }.bind(this));
 }
+
+PouchDB.prototype.changes = function(options) {
+  var changes = this._changes.createReadStream();
+  // We've talked about the return value of changes being an event emitter,
+  // why not just bind some listeners and return the emitter?
+  changes.on('end', function() {
+    console.log('done');
+  });
+  // Now we return `changes` and the user can hook in with whatever they want
+  // changes.on('data', function(change) {}); bam
+  return changes;
+};
 
 /**
  * This is kind of the `magic` document insertion function. It will assume
