@@ -9,9 +9,10 @@ function PouchDB(location, options) {
   this._store = levelup(location || options, options);
 }
 
-PouchDB.prototype.put = function(doc, options, callback) {
+PouchDB.prototype.put = function(doc, opts, callback) {
+  callback = callback || opts;
   doc._rev = 'randomhashthing';
-  this._store.put(doc._id, doc, options, function(err) {
+  this._store.put(doc._id, doc, null, function(err) {
     if (err) return callback.call(null, err);
     callback.call(null, null, {
       ok: true,
@@ -19,6 +20,11 @@ PouchDB.prototype.put = function(doc, options, callback) {
       rev: 'randomhashthing'
     });
   });
+};
+
+PouchDB.prototype.get = function(id, opts, callback) {
+  callback = callback || opts;
+  this._store.get(id, null, callback);
 };
 
 module.exports = PouchDB;
