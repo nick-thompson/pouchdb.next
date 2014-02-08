@@ -10,7 +10,15 @@ function PouchDB(location, options) {
 }
 
 PouchDB.prototype.put = function(doc, options, callback) {
-  this._store.put(doc._id, doc, options, callback);
+  doc._rev = 'randomhashthing';
+  this._store.put(doc._id, doc, options, function(err) {
+    if (err) return callback.call(null, err);
+    callback.call(null, null, {
+      ok: true,
+      id: doc._id,
+      rev: 'randomhashthing'
+    });
+  });
 };
 
 module.exports = PouchDB;
