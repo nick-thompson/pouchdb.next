@@ -4,7 +4,8 @@
   "description": "Reference implementation for discussion around daleharvey/pouchdb/issues/1250.",
   "main": "index.js",
   "scripts": {
-    "test": "mocha"
+    "test": "mocha",
+    "build": "mkdir -p ./build && browserify -r ./browser.js:PouchDB -o ./build/pouchdb.js"
   },
   "author": "Nick Thompson",
   "license": "Apache 2.0",
@@ -12,6 +13,8 @@
     "levelup": "0.18.2",
     "extend": "1.2.1",
     "mocha": "~1.17.1",
-    "memdown": "~0.6.0"
+    "memdown": "~0.6.0",
+    "browserify": "~3.24.13",
+    "level-js": "~1.1.2"
   }
 }
