@@ -41,29 +41,80 @@ if (typeof module !== 'undefined' && typeof module.exports !== 'undefined') {
   window.pouchdb = factory;
 }
 
-},{"./":2,"extend":23,"level-js":24,"memdown":91}],2:[function(require,module,exports){
+},{"./":2,"extend":23,"level-js":24,"memdown":104}],2:[function(require,module,exports){
 
 var levelup = require('levelup');
 var extend = require('extend');
+var sublevel = require('level-sublevel');
 
 function PouchDB(location, options) {
-  options = extend(options || location || {}, {
-    valueEncoding: 'json'
-  });
-  this._store = levelup(location || options, options);
+  // Make sure not to modify the options object by deep copying up front.
+  var opts = extend(true, {}, options, { valueEncoding: 'json' });
+  this._lastSeq = 0;
+  this._db = sublevel(levelup(location, opts));
+  this._changes = this._db.sublevel('changes');
+  this._attachments = this._db.sublevel('attachments');
+  this._docs = this._db.sublevel('docs');
+  // Hook into `this._db` to insert a change document on every insertion.
+  this._db.pre(function(ch, add) {
+    var change = extend(true, {}, ch.value);
+    var key = ++this._lastSeq;
+    change.seq = key;
+    add({
+      type: 'put',
+      key: key,
+      value: change,
+      prefix: this._changes
+    });
+  }.bind(this));
 }
 
-PouchDB.prototype.put = function(doc, opts, callback) {
-  callback = callback || opts;
-  doc._rev = 'randomhashthing';
-  this._store.put(doc._id, doc, null, function(err) {
-    if (err) return callback.call(null, err);
-    callback.call(null, null, {
-      ok: true,
-      id: doc._id,
-      rev: 'randomhashthing'
+PouchDB.prototype.changes = function(options) {
+  var changes = this._changes.createReadStream();
+  // We've talked about the return value of changes being an event emitter,
+  // why not just bind some listeners and return the emitter?
+  changes.on('end', function() {
+    console.log('done');
+  });
+  // Now we return `changes` and the user can hook in with whatever they want
+  // changes.on('data', function(change) {}); bam
+  return changes;
+};
+
+/**
+ * This is kind of the `magic` document insertion function. It will assume
+ * that all documents passed to it are deep copies of the original arguments
+ * to top-level API methods, so it is free to modify in place at will.
+ *
+ * @param {Array} docs
+ * @param {object} options
+ * @param {function} callback (err, result)
+ */
+PouchDB.prototype._insert = function(docs, options, callback) {
+  // Here we'll do things like assign ids to documents without ids, generate
+  // revs if there are no revs, etc.
+  docs.forEach(function(doc) {
+    // Obviously we'll use the bulk api here, but, for simplicity's sake...
+    doc._rev = 'randomhashthing';
+    this._store.put(doc._id, doc, null, function(err) {
+      if (err) return callback.call(null, err);
+      callback.call(null, null, {
+        ok: true,
+        id: doc._id,
+        rev: 'randomhashthing'
+      });
     });
   });
+};
+
+PouchDB.prototype.put = function(doc, opts, callback) {
+  if (!callback) {
+    callback = opts;
+    opts = {};
+  }
+  // Deep copy document to avoid writing over the user's stuff
+  doc = extend(true, {}, doc);
+  this._insert([doc], opts, callback);
 };
 
 PouchDB.prototype.get = function(id, opts, callback) {
@@ -73,7 +124,7 @@ PouchDB.prototype.get = function(id, opts, callback) {
 
 module.exports = PouchDB;
 
-},{"extend":23,"levelup":39}],3:[function(require,module,exports){
+},{"extend":23,"level-sublevel":38,"levelup":52}],3:[function(require,module,exports){
 // http://wiki.commonjs.org/wiki/Unit_Testing/1.0
 //
 // THIS IS NOT TESTED NOR LIKELY TO WORK OUTSIDE V8!
@@ -6748,6 +6799,1622 @@ function isBuffer (o) {
 }
 
 },{"buffer":10}],37:[function(require,module,exports){
+function addOperation (type, key, value, options) {
+  var operation = {
+    type: type,
+    key: key,
+    value: value,
+    options: options
+  }
+
+  if (options && options.prefix) {
+    operation.prefix = options.prefix
+    delete options.prefix
+  }
+
+  this._operations.push(operation)
+
+  return this
+}
+
+function Batch(sdb) {
+  this._operations = []
+  this._sdb = sdb
+
+  this.put = addOperation.bind(this, 'put')
+  this.del = addOperation.bind(this, 'del')
+}
+
+var B = Batch.prototype
+
+
+B.clear = function () {
+  this._operations = []
+}
+
+B.write = function (cb) {
+  this._sdb.batch(this._operations, cb)
+}
+
+module.exports = Batch
+
+},{}],38:[function(require,module,exports){
+(function (process){var EventEmitter = require('events').EventEmitter
+var next         = process.nextTick
+var SubDb        = require('./sub')
+var Batch        = require('./batch')
+var fixRange     = require('level-fix-range')
+
+var Hooks   = require('level-hooks')
+
+module.exports   = function (_db, options) {
+  function DB () {}
+  DB.prototype = _db
+  var db = new DB()
+
+  if (db.sublevel) return db
+
+  options = options || {}
+
+  //use \xff (255) as the seperator,
+  //so that sections of the database will sort after the regular keys
+  var sep = options.sep = options.sep || '\xff'
+  db._options = options
+
+  Hooks(db)
+
+  db.sublevels = {}
+
+  db.sublevel = function (prefix, options) {
+    if(db.sublevels[prefix])
+      return db.sublevels[prefix]
+    return new SubDb(db, prefix, options || this._options)
+  }
+
+  db.methods = {}
+
+  db.prefix = function (key) {
+    return '' + (key || '')
+  }
+
+  db.pre = function (range, hook) {
+    if(!hook)
+      hook = range, range = {
+        max  : sep
+      }
+    return db.hooks.pre(range, hook)
+  }
+
+  db.post = function (range, hook) {
+    if(!hook)
+      hook = range, range = {
+        max : sep
+      }
+    return db.hooks.post(range, hook)
+  }
+
+  function safeRange(fun) {
+    return function (opts) {
+      opts = opts || {}
+      opts = fixRange(opts)
+
+      if(opts.reverse) opts.start = opts.start || sep
+      else             opts.end   = opts.end || sep
+
+      return fun.call(db, opts)
+    }
+  }
+
+  db.readStream =
+  db.createReadStream  = safeRange(db.createReadStream)
+  db.keyStream =
+  db.createKeyStream   = safeRange(db.createKeyStream)
+  db.valuesStream =
+  db.createValueStream = safeRange(db.createValueStream)
+
+  var batch = db.batch
+  db.batch = function (changes, opts, cb) {
+    if(!Array.isArray(changes))
+      return new Batch(db)
+    changes.forEach(function (e) {
+      if(e.prefix) {
+        if('function' === typeof e.prefix.prefix)
+          e.key = e.prefix.prefix(e.key)
+        else if('string'  === typeof e.prefix)
+          e.key = e.prefix + e.key
+      }
+    })
+    batch.call(db, changes, opts, cb)
+  }
+  return db
+}
+
+}).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
+},{"./batch":37,"./sub":49,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"events":7,"level-fix-range":39,"level-hooks":41}],39:[function(require,module,exports){
+var clone = require('clone')
+
+module.exports = 
+function fixRange(opts) {
+  opts = clone(opts)
+
+  var reverse = opts.reverse
+  var end     = opts.max || opts.end
+  var start   = opts.min || opts.start
+
+  var range = [start, end]
+  if(start != null && end != null)
+    range.sort()
+  if(reverse)
+    range = range.reverse()
+
+  opts.start   = range[0]
+  opts.end     = range[1]
+
+  delete opts.min
+  delete opts.max
+
+  return opts
+}
+
+},{"clone":40}],40:[function(require,module,exports){
+(function (Buffer){"use strict";
+
+function objectToString(o) {
+  return Object.prototype.toString.call(o);
+}
+
+var util = {
+  isArray: function (ar) {
+    return Array.isArray(ar) || (typeof ar === 'object' && objectToString(ar) === '[object Array]');
+  },
+  isDate: function (d) {
+    return typeof d === 'object' && objectToString(d) === '[object Date]';
+  },
+  isRegExp: function (re) {
+    return typeof re === 'object' && objectToString(re) === '[object RegExp]';
+  },
+  getRegExpFlags: function (re) {
+    var flags = '';
+    re.global && (flags += 'g');
+    re.ignoreCase && (flags += 'i');
+    re.multiline && (flags += 'm');
+    return flags;
+  }
+};
+
+if (typeof module === 'object')
+  module.exports = clone;
+
+/**
+ * Clones (copies) an Object using deep copying.
+ *
+ * This function supports circular references by default, but if you are certain
+ * there are no circular references in your object, you can save some CPU time
+ * by calling clone(obj, false).
+ *
+ * Caution: if `circular` is false and `parent` contains circular references,
+ * your program may enter an infinite loop and crash.
+ *
+ * @param `parent` - the object to be cloned
+ * @param `circular` - set to true if the object to be cloned may contain
+ *    circular references. (optional - true by default)
+*/
+function clone(parent, circular) {
+  if (typeof circular == 'undefined')
+    circular = true;
+
+  var useBuffer = typeof Buffer != 'undefined';
+
+  var circularParent = {};
+  var circularResolved = {};
+  var circularReplace = [];
+
+  function _clone(parent, context, child, cIndex) {
+    var i; // Use local context within this function
+    // Deep clone all properties of parent into child
+    if (typeof parent == 'object') {
+      if (parent == null)
+        return parent;
+      // Check for circular references
+      for(i in circularParent)
+        if (circularParent[i] === parent) {
+          // We found a circular reference
+          circularReplace.push({'resolveTo': i, 'child': child, 'i': cIndex});
+          return null; //Just return null for now...
+          // we will resolve circular references later
+        }
+
+      // Add to list of all parent objects
+      circularParent[context] = parent;
+      // Now continue cloning...
+      if (util.isArray(parent)) {
+        child = [];
+        for(i in parent)
+          child[i] = _clone(parent[i], context + '[' + i + ']', child, i);
+      }
+      else if (util.isDate(parent))
+        child = new Date(parent.getTime());
+      else if (util.isRegExp(parent)) {
+        child = new RegExp(parent.source, util.getRegExpFlags(parent));
+        if (parent.lastIndex) child.lastIndex = parent.lastIndex;
+      } else if (useBuffer && Buffer.isBuffer(parent))
+      {
+        child = new Buffer(parent.length);
+        parent.copy(child);
+      }
+      else {
+        child = {};
+
+        // Also copy prototype over to new cloned object
+        child.__proto__ = parent.__proto__;
+        for(i in parent)
+          child[i] = _clone(parent[i], context + '[' + i + ']', child, i);
+      }
+
+      // Add to list of all cloned objects
+      circularResolved[context] = child;
+    }
+    else
+      child = parent; //Just a simple shallow copy will do
+    return child;
+  }
+
+  var i;
+  if (circular) {
+    var cloned = _clone(parent, '*');
+
+    // Now this object has been cloned. Let's check to see if there are any
+    // circular references for it
+    for(i in circularReplace) {
+      var c = circularReplace[i];
+      if (c && c.child && c.i in c.child) {
+        c.child[c.i] = circularResolved[c.resolveTo];
+      }
+    }
+    return cloned;
+  } else {
+    // Deep clone all properties of parent into child
+    var child;
+    if (typeof parent == 'object') {
+      if (parent == null)
+        return parent;
+      if (parent.constructor.name === 'Array') {
+        child = [];
+        for(i in parent)
+          child[i] = clone(parent[i], circular);
+      }
+      else if (util.isDate(parent))
+        child = new Date(parent.getTime() );
+      else if (util.isRegExp(parent)) {
+        child = new RegExp(parent.source, util.getRegExpFlags(parent));
+        if (parent.lastIndex) child.lastIndex = parent.lastIndex;
+      } else {
+        child = {};
+        child.__proto__ = parent.__proto__;
+        for(i in parent)
+          child[i] = clone(parent[i], circular);
+      }
+    }
+    else
+      child = parent; // Just a simple shallow clone will do
+    return child;
+  }
+}
+
+/**
+ * Simple flat clone using prototype, accepts only objects, usefull for property
+ * override on FLAT configuration object (no nested props).
+ *
+ * USE WITH CAUTION! This may not behave as you wish if you do not know how this
+ * works.
+ */
+clone.clonePrototype = function(parent) {
+  if (parent === null)
+    return null;
+
+  var c = function () {};
+  c.prototype = parent;
+  return new c();
+};
+}).call(this,require("buffer").Buffer)
+},{"buffer":10}],41:[function(require,module,exports){
+var ranges = require('string-range')
+
+module.exports = function (db) {
+
+  if(db.hooks) {
+    return     
+  }
+
+  var posthooks = []
+  var prehooks  = []
+
+  function getPrefix (p) {
+    return p && (
+        'string' ===   typeof p        ? p
+      : 'string' ===   typeof p.prefix ? p.prefix
+      : 'function' === typeof p.prefix ? p.prefix()
+      :                                  ''
+      )
+  }
+
+  function getKeyEncoding (db) {
+    if(db && db._getKeyEncoding)
+      return db._getKeyEncoding(db)
+  }
+
+  function getValueEncoding (db) {
+    if(db && db._getValueEncoding)
+      return db._getValueEncoding(db)
+  }
+
+  function remover (array, item) {
+    return function () {
+      var i = array.indexOf(item)
+      if(!~i) return false        
+      array.splice(i, 1)
+      return true
+    }
+  }
+
+  db.hooks = {
+    post: function (prefix, hook) {
+      if(!hook) hook = prefix, prefix = ''
+      var h = {test: ranges.checker(prefix), hook: hook}
+      posthooks.push(h)
+      return remover(posthooks, h)
+    },
+    pre: function (prefix, hook) {
+      if(!hook) hook = prefix, prefix = ''
+      var h = {test: ranges.checker(prefix), hook: hook}
+      prehooks.push(h)
+      return remover(prehooks, h)
+    },
+    posthooks: posthooks,
+    prehooks: prehooks
+  }
+
+  //POST HOOKS
+
+  function each (e) {
+    if(e && e.type) {
+      posthooks.forEach(function (h) {
+        if(h.test(e.key)) h.hook(e)
+      })
+    }
+  }
+
+  db.on('put', function (key, val) {
+    each({type: 'put', key: key, value: val})
+  })
+  db.on('del', function (key, val) {
+    each({type: 'del', key: key, value: val})
+  })
+  db.on('batch', function onBatch (ary) {
+    ary.forEach(each)
+  })
+
+  //PRE HOOKS
+
+  var put = db.put
+  var del = db.del
+  var batch = db.batch
+
+  function callHooks (isBatch, b, opts, cb) {
+    try {
+    b.forEach(function hook(e, i) {
+      prehooks.forEach(function (h) {
+        if(h.test(String(e.key))) {
+          //optimize this?
+          //maybe faster to not create a new object each time?
+          //have one object and expose scope to it?
+          var context = {
+            add: function (ch, db) {
+              if(typeof ch === 'undefined') {
+                return this
+              }
+              if(ch === false)
+                return delete b[i]
+              var prefix = (
+                getPrefix(ch.prefix) || 
+                getPrefix(db) || 
+                h.prefix || ''
+              )
+              ch.key = prefix + ch.key
+              if(h.test(String(ch.key))) {
+                //this usually means a stack overflow.
+                throw new Error('prehook cannot insert into own range')
+              }
+              var ke = ch.keyEncoding   || getKeyEncoding(ch.prefix)
+              var ve = ch.valueEncoding || getValueEncoding(ch.prefix)
+              if(ke) ch.keyEncoding = ke
+              if(ve) ch.valueEncoding = ve
+
+              b.push(ch)
+              hook(ch, b.length - 1)
+              return this
+            },
+            put: function (ch, db) {
+              if('object' === typeof ch) ch.type = 'put'
+              return this.add(ch, db)
+            },
+            del: function (ch, db) {
+              if('object' === typeof ch) ch.type = 'del'
+              return this.add(ch, db)
+            },
+            veto: function () {
+              return this.add(false)
+            }
+          }
+          h.hook.call(context, e, context.add, b)
+        }
+      })
+    })
+    } catch (err) {
+      return (cb || opts)(err)
+    }
+    b = b.filter(function (e) {
+      return e && e.type //filter out empty items
+    })
+
+    if(b.length == 1 && !isBatch) {
+      var change = b[0]
+      return change.type == 'put' 
+        ? put.call(db, change.key, change.value, opts, cb) 
+        : del.call(db, change.key, opts, cb)  
+    }
+    return batch.call(db, b, opts, cb)
+  }
+
+  db.put = function (key, value, opts, cb ) {
+    var batch = [{key: key, value: value, type: 'put'}]
+    return callHooks(false, batch, opts, cb)
+  }
+
+  db.del = function (key, opts, cb) {
+    var batch = [{key: key, type: 'del'}]
+    return callHooks(false, batch, opts, cb)
+  }
+
+  db.batch = function (batch, opts, cb) {
+    return callHooks(true, batch, opts, cb)
+  }
+}
+
+},{"string-range":42}],42:[function(require,module,exports){
+
+//force to a valid range
+var range = exports.range = function (obj) {
+  return null == obj ? {} : 'string' === typeof range ? {
+      min: range, max: range + '\xff'
+    } :  obj
+}
+
+//turn into a sub range.
+var prefix = exports.prefix = function (range, within, term) {
+  range = exports.range(range)
+  var _range = {}
+  term = term || '\xff'
+  if(range instanceof RegExp || 'function' == typeof range) {
+    _range.min = within
+    _range.max   = within + term,
+    _range.inner = function (k) {
+      var j = k.substring(within.length)
+      if(range.test)
+        return range.test(j)
+      return range(j)
+    }
+  }
+  else if('object' === typeof range) {
+    _range.min = within + (range.min || range.start || '')
+    _range.max = within + (range.max || range.end   || (term || '~'))
+    _range.reverse = !!range.reverse
+  }
+  return _range
+}
+
+//return a function that checks a range
+var checker = exports.checker = function (range) {
+  if(!range) range = {}
+
+  if ('string' === typeof range)
+    return function (key) {
+      return key.indexOf(range) == 0
+    }
+  else if(range instanceof RegExp)
+    return function (key) {
+      return range.test(key)
+    }
+  else if('object' === typeof range)
+    return function (key) {
+      var min = range.min || range.start
+      var max = range.max || range.end
+
+      // fixes keys passed as ints from sublevels
+      key = String(key)
+
+      return (
+        !min || key >= min
+      ) && (
+        !max || key <= max
+      ) && (
+        !range.inner || (
+          range.inner.test 
+            ? range.inner.test(key)
+            : range.inner(key)
+        )
+      )
+    }
+  else if('function' === typeof range)
+    return range
+}
+//check if a key is within a range.
+var satifies = exports.satisfies = function (key, range) {
+  return checker(range)(key)
+}
+
+
+
+},{}],43:[function(require,module,exports){
+module.exports=require(29)
+},{}],44:[function(require,module,exports){
+arguments[4][30][0].apply(exports,arguments)
+},{"./has-keys":43,"object-keys":45}],45:[function(require,module,exports){
+arguments[4][32][0].apply(exports,arguments)
+},{"./shim":48}],46:[function(require,module,exports){
+
+var hasOwn = Object.prototype.hasOwnProperty;
+var toString = Object.prototype.toString;
+
+module.exports = function forEach (obj, fn, ctx) {
+    if (toString.call(fn) !== '[object Function]') {
+        throw new TypeError('iterator must be a function');
+    }
+    var l = obj.length;
+    if (l === +l) {
+        for (var i = 0; i < l; i++) {
+            fn.call(ctx, obj[i], i, obj);
+        }
+    } else {
+        for (var k in obj) {
+            if (hasOwn.call(obj, k)) {
+                fn.call(ctx, obj[k], k, obj);
+            }
+        }
+    }
+};
+
+
+},{}],47:[function(require,module,exports){
+
+/**!
+ * is
+ * the definitive JavaScript type testing library
+ * 
+ * @copyright 2013 Enrico Marino
+ * @license MIT
+ */
+
+var objProto = Object.prototype;
+var owns = objProto.hasOwnProperty;
+var toString = objProto.toString;
+var isActualNaN = function (value) {
+  return value !== value;
+};
+var NON_HOST_TYPES = {
+  "boolean": 1,
+  "number": 1,
+  "string": 1,
+  "undefined": 1
+};
+
+/**
+ * Expose `is`
+ */
+
+var is = module.exports = {};
+
+/**
+ * Test general.
+ */
+
+/**
+ * is.type
+ * Test if `value` is a type of `type`.
+ *
+ * @param {Mixed} value value to test
+ * @param {String} type type
+ * @return {Boolean} true if `value` is a type of `type`, false otherwise
+ * @api public
+ */
+
+is.a =
+is.type = function (value, type) {
+  return typeof value === type;
+};
+
+/**
+ * is.defined
+ * Test if `value` is defined.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if 'value' is defined, false otherwise
+ * @api public
+ */
+
+is.defined = function (value) {
+  return value !== undefined;
+};
+
+/**
+ * is.empty
+ * Test if `value` is empty.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is empty, false otherwise
+ * @api public
+ */
+
+is.empty = function (value) {
+  var type = toString.call(value);
+  var key;
+
+  if ('[object Array]' === type || '[object Arguments]' === type) {
+    return value.length === 0;
+  }
+
+  if ('[object Object]' === type) {
+    for (key in value) if (owns.call(value, key)) return false;
+    return true;
+  }
+
+  if ('[object String]' === type) {
+    return '' === value;
+  }
+
+  return false;
+};
+
+/**
+ * is.equal
+ * Test if `value` is equal to `other`.
+ *
+ * @param {Mixed} value value to test
+ * @param {Mixed} other value to compare with
+ * @return {Boolean} true if `value` is equal to `other`, false otherwise
+ */
+
+is.equal = function (value, other) {
+  var type = toString.call(value)
+  var key;
+
+  if (type !== toString.call(other)) {
+    return false;
+  }
+
+  if ('[object Object]' === type) {
+    for (key in value) {
+      if (!is.equal(value[key], other[key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  if ('[object Array]' === type) {
+    key = value.length;
+    if (key !== other.length) {
+      return false;
+    }
+    while (--key) {
+      if (!is.equal(value[key], other[key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  if ('[object Function]' === type) {
+    return value.prototype === other.prototype;
+  }
+
+  if ('[object Date]' === type) {
+    return value.getTime() === other.getTime();
+  }
+
+  return value === other;
+};
+
+/**
+ * is.hosted
+ * Test if `value` is hosted by `host`.
+ *
+ * @param {Mixed} value to test
+ * @param {Mixed} host host to test with
+ * @return {Boolean} true if `value` is hosted by `host`, false otherwise
+ * @api public
+ */
+
+is.hosted = function (value, host) {
+  var type = typeof host[value];
+  return type === 'object' ? !!host[value] : !NON_HOST_TYPES[type];
+};
+
+/**
+ * is.instance
+ * Test if `value` is an instance of `constructor`.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is an instance of `constructor`
+ * @api public
+ */
+
+is.instance = is['instanceof'] = function (value, constructor) {
+  return value instanceof constructor;
+};
+
+/**
+ * is.null
+ * Test if `value` is null.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is null, false otherwise
+ * @api public
+ */
+
+is['null'] = function (value) {
+  return value === null;
+};
+
+/**
+ * is.undefined
+ * Test if `value` is undefined.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is undefined, false otherwise
+ * @api public
+ */
+
+is.undefined = function (value) {
+  return value === undefined;
+};
+
+/**
+ * Test arguments.
+ */
+
+/**
+ * is.arguments
+ * Test if `value` is an arguments object.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is an arguments object, false otherwise
+ * @api public
+ */
+
+is.arguments = function (value) {
+  var isStandardArguments = '[object Arguments]' === toString.call(value);
+  var isOldArguments = !is.array(value) && is.arraylike(value) && is.object(value) && is.fn(value.callee);
+  return isStandardArguments || isOldArguments;
+};
+
+/**
+ * Test array.
+ */
+
+/**
+ * is.array
+ * Test if 'value' is an array.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is an array, false otherwise
+ * @api public
+ */
+
+is.array = function (value) {
+  return '[object Array]' === toString.call(value);
+};
+
+/**
+ * is.arguments.empty
+ * Test if `value` is an empty arguments object.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is an empty arguments object, false otherwise
+ * @api public
+ */
+is.arguments.empty = function (value) {
+  return is.arguments(value) && value.length === 0;
+};
+
+/**
+ * is.array.empty
+ * Test if `value` is an empty array.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is an empty array, false otherwise
+ * @api public
+ */
+is.array.empty = function (value) {
+  return is.array(value) && value.length === 0;
+};
+
+/**
+ * is.arraylike
+ * Test if `value` is an arraylike object.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is an arguments object, false otherwise
+ * @api public
+ */
+
+is.arraylike = function (value) {
+  return !!value && !is.boolean(value)
+    && owns.call(value, 'length')
+    && isFinite(value.length)
+    && is.number(value.length)
+    && value.length >= 0;
+};
+
+/**
+ * Test boolean.
+ */
+
+/**
+ * is.boolean
+ * Test if `value` is a boolean.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is a boolean, false otherwise
+ * @api public
+ */
+
+is.boolean = function (value) {
+  return '[object Boolean]' === toString.call(value);
+};
+
+/**
+ * is.false
+ * Test if `value` is false.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is false, false otherwise
+ * @api public
+ */
+
+is['false'] = function (value) {
+  return is.boolean(value) && (value === false || value.valueOf() === false);
+};
+
+/**
+ * is.true
+ * Test if `value` is true.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is true, false otherwise
+ * @api public
+ */
+
+is['true'] = function (value) {
+  return is.boolean(value) && (value === true || value.valueOf() === true);
+};
+
+/**
+ * Test date.
+ */
+
+/**
+ * is.date
+ * Test if `value` is a date.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is a date, false otherwise
+ * @api public
+ */
+
+is.date = function (value) {
+  return '[object Date]' === toString.call(value);
+};
+
+/**
+ * Test element.
+ */
+
+/**
+ * is.element
+ * Test if `value` is an html element.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is an HTML Element, false otherwise
+ * @api public
+ */
+
+is.element = function (value) {
+  return value !== undefined
+    && typeof HTMLElement !== 'undefined'
+    && value instanceof HTMLElement
+    && value.nodeType === 1;
+};
+
+/**
+ * Test error.
+ */
+
+/**
+ * is.error
+ * Test if `value` is an error object.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is an error object, false otherwise
+ * @api public
+ */
+
+is.error = function (value) {
+  return '[object Error]' === toString.call(value);
+};
+
+/**
+ * Test function.
+ */
+
+/**
+ * is.fn / is.function (deprecated)
+ * Test if `value` is a function.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is a function, false otherwise
+ * @api public
+ */
+
+is.fn = is['function'] = function (value) {
+  var isAlert = typeof window !== 'undefined' && value === window.alert;
+  return isAlert || '[object Function]' === toString.call(value);
+};
+
+/**
+ * Test number.
+ */
+
+/**
+ * is.number
+ * Test if `value` is a number.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is a number, false otherwise
+ * @api public
+ */
+
+is.number = function (value) {
+  return '[object Number]' === toString.call(value);
+};
+
+/**
+ * is.infinite
+ * Test if `value` is positive or negative infinity.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is positive or negative Infinity, false otherwise
+ * @api public
+ */
+is.infinite = function (value) {
+  return value === Infinity || value === -Infinity;
+};
+
+/**
+ * is.decimal
+ * Test if `value` is a decimal number.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is a decimal number, false otherwise
+ * @api public
+ */
+
+is.decimal = function (value) {
+  return is.number(value) && !isActualNaN(value) && !is.infinite(value) && value % 1 !== 0;
+};
+
+/**
+ * is.divisibleBy
+ * Test if `value` is divisible by `n`.
+ *
+ * @param {Number} value value to test
+ * @param {Number} n dividend
+ * @return {Boolean} true if `value` is divisible by `n`, false otherwise
+ * @api public
+ */
+
+is.divisibleBy = function (value, n) {
+  var isDividendInfinite = is.infinite(value);
+  var isDivisorInfinite = is.infinite(n);
+  var isNonZeroNumber = is.number(value) && !isActualNaN(value) && is.number(n) && !isActualNaN(n) && n !== 0;
+  return isDividendInfinite || isDivisorInfinite || (isNonZeroNumber && value % n === 0);
+};
+
+/**
+ * is.int
+ * Test if `value` is an integer.
+ *
+ * @param value to test
+ * @return {Boolean} true if `value` is an integer, false otherwise
+ * @api public
+ */
+
+is.int = function (value) {
+  return is.number(value) && !isActualNaN(value) && value % 1 === 0;
+};
+
+/**
+ * is.maximum
+ * Test if `value` is greater than 'others' values.
+ *
+ * @param {Number} value value to test
+ * @param {Array} others values to compare with
+ * @return {Boolean} true if `value` is greater than `others` values
+ * @api public
+ */
+
+is.maximum = function (value, others) {
+  if (isActualNaN(value)) {
+    throw new TypeError('NaN is not a valid value');
+  } else if (!is.arraylike(others)) {
+    throw new TypeError('second argument must be array-like');
+  }
+  var len = others.length;
+
+  while (--len >= 0) {
+    if (value < others[len]) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+/**
+ * is.minimum
+ * Test if `value` is less than `others` values.
+ *
+ * @param {Number} value value to test
+ * @param {Array} others values to compare with
+ * @return {Boolean} true if `value` is less than `others` values
+ * @api public
+ */
+
+is.minimum = function (value, others) {
+  if (isActualNaN(value)) {
+    throw new TypeError('NaN is not a valid value');
+  } else if (!is.arraylike(others)) {
+    throw new TypeError('second argument must be array-like');
+  }
+  var len = others.length;
+
+  while (--len >= 0) {
+    if (value > others[len]) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+/**
+ * is.nan
+ * Test if `value` is not a number.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is not a number, false otherwise
+ * @api public
+ */
+
+is.nan = function (value) {
+  return !is.number(value) || value !== value;
+};
+
+/**
+ * is.even
+ * Test if `value` is an even number.
+ *
+ * @param {Number} value value to test
+ * @return {Boolean} true if `value` is an even number, false otherwise
+ * @api public
+ */
+
+is.even = function (value) {
+  return is.infinite(value) || (is.number(value) && value === value && value % 2 === 0);
+};
+
+/**
+ * is.odd
+ * Test if `value` is an odd number.
+ *
+ * @param {Number} value value to test
+ * @return {Boolean} true if `value` is an odd number, false otherwise
+ * @api public
+ */
+
+is.odd = function (value) {
+  return is.infinite(value) || (is.number(value) && value === value && value % 2 !== 0);
+};
+
+/**
+ * is.ge
+ * Test if `value` is greater than or equal to `other`.
+ *
+ * @param {Number} value value to test
+ * @param {Number} other value to compare with
+ * @return {Boolean}
+ * @api public
+ */
+
+is.ge = function (value, other) {
+  if (isActualNaN(value) || isActualNaN(other)) {
+    throw new TypeError('NaN is not a valid value');
+  }
+  return !is.infinite(value) && !is.infinite(other) && value >= other;
+};
+
+/**
+ * is.gt
+ * Test if `value` is greater than `other`.
+ *
+ * @param {Number} value value to test
+ * @param {Number} other value to compare with
+ * @return {Boolean}
+ * @api public
+ */
+
+is.gt = function (value, other) {
+  if (isActualNaN(value) || isActualNaN(other)) {
+    throw new TypeError('NaN is not a valid value');
+  }
+  return !is.infinite(value) && !is.infinite(other) && value > other;
+};
+
+/**
+ * is.le
+ * Test if `value` is less than or equal to `other`.
+ *
+ * @param {Number} value value to test
+ * @param {Number} other value to compare with
+ * @return {Boolean} if 'value' is less than or equal to 'other'
+ * @api public
+ */
+
+is.le = function (value, other) {
+  if (isActualNaN(value) || isActualNaN(other)) {
+    throw new TypeError('NaN is not a valid value');
+  }
+  return !is.infinite(value) && !is.infinite(other) && value <= other;
+};
+
+/**
+ * is.lt
+ * Test if `value` is less than `other`.
+ *
+ * @param {Number} value value to test
+ * @param {Number} other value to compare with
+ * @return {Boolean} if `value` is less than `other`
+ * @api public
+ */
+
+is.lt = function (value, other) {
+  if (isActualNaN(value) || isActualNaN(other)) {
+    throw new TypeError('NaN is not a valid value');
+  }
+  return !is.infinite(value) && !is.infinite(other) && value < other;
+};
+
+/**
+ * is.within
+ * Test if `value` is within `start` and `finish`.
+ *
+ * @param {Number} value value to test
+ * @param {Number} start lower bound
+ * @param {Number} finish upper bound
+ * @return {Boolean} true if 'value' is is within 'start' and 'finish'
+ * @api public
+ */
+is.within = function (value, start, finish) {
+  if (isActualNaN(value) || isActualNaN(start) || isActualNaN(finish)) {
+    throw new TypeError('NaN is not a valid value');
+  } else if (!is.number(value) || !is.number(start) || !is.number(finish)) {
+    throw new TypeError('all arguments must be numbers');
+  }
+  var isAnyInfinite = is.infinite(value) || is.infinite(start) || is.infinite(finish);
+  return isAnyInfinite || (value >= start && value <= finish);
+};
+
+/**
+ * Test object.
+ */
+
+/**
+ * is.object
+ * Test if `value` is an object.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is an object, false otherwise
+ * @api public
+ */
+
+is.object = function (value) {
+  return value && '[object Object]' === toString.call(value);
+};
+
+/**
+ * is.hash
+ * Test if `value` is a hash - a plain object literal.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is a hash, false otherwise
+ * @api public
+ */
+
+is.hash = function (value) {
+  return is.object(value) && value.constructor === Object && !value.nodeType && !value.setInterval;
+};
+
+/**
+ * Test regexp.
+ */
+
+/**
+ * is.regexp
+ * Test if `value` is a regular expression.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if `value` is a regexp, false otherwise
+ * @api public
+ */
+
+is.regexp = function (value) {
+  return '[object RegExp]' === toString.call(value);
+};
+
+/**
+ * Test string.
+ */
+
+/**
+ * is.string
+ * Test if `value` is a string.
+ *
+ * @param {Mixed} value value to test
+ * @return {Boolean} true if 'value' is a string, false otherwise
+ * @api public
+ */
+
+is.string = function (value) {
+  return '[object String]' === toString.call(value);
+};
+
+
+},{}],48:[function(require,module,exports){
+(function () {
+	"use strict";
+
+	// modified from https://github.com/kriskowal/es5-shim
+	var has = Object.prototype.hasOwnProperty,
+		is = require('is'),
+		forEach = require('foreach'),
+		hasDontEnumBug = !({'toString': null}).propertyIsEnumerable('toString'),
+		dontEnums = [
+			"toString",
+			"toLocaleString",
+			"valueOf",
+			"hasOwnProperty",
+			"isPrototypeOf",
+			"propertyIsEnumerable",
+			"constructor"
+		],
+		keysShim;
+
+	keysShim = function keys(object) {
+		if (!is.object(object) && !is.array(object)) {
+			throw new TypeError("Object.keys called on a non-object");
+		}
+
+		var name, theKeys = [];
+		for (name in object) {
+			if (has.call(object, name)) {
+				theKeys.push(name);
+			}
+		}
+
+		if (hasDontEnumBug) {
+			forEach(dontEnums, function (dontEnum) {
+				if (has.call(object, dontEnum)) {
+					theKeys.push(dontEnum);
+				}
+			});
+		}
+		return theKeys;
+	};
+
+	module.exports = keysShim;
+}());
+
+
+},{"foreach":46,"is":47}],49:[function(require,module,exports){
+var EventEmitter = require('events').EventEmitter
+var inherits     = require('util').inherits
+var ranges       = require('string-range')
+var fixRange     = require('level-fix-range')
+var xtend        = require('xtend')
+var Batch        = require('./batch')
+
+inherits(SubDB, EventEmitter)
+
+function SubDB (db, prefix, options) {
+  if('string' === typeof options) {
+    console.error('db.sublevel(name, seperator<string>) is depreciated')
+    console.error('use db.sublevel(name, {sep: separator})) if you must')
+    options = {sep: options}
+  }
+  if(!(this instanceof SubDB)) return new SubDB(db, prefix, options)
+  if(!db)     throw new Error('must provide db')
+  if(!prefix) throw new Error('must provide prefix')
+
+  options = options || {}
+  options.sep = options.sep || '\xff'
+
+  this._parent = db
+  this._options = options
+  this.options = options
+  this._prefix = prefix
+  this._root = root(this)
+  db.sublevels[prefix] = this
+  this.sublevels = {}
+  this.methods = {}
+  var self = this
+  this.hooks = {
+    pre: function () {
+      return self.pre.apply(self, arguments)
+    },
+    post: function () {
+      return self.post.apply(self, arguments)
+    }
+  }
+}
+
+var SDB = SubDB.prototype
+
+SDB._key = function (key) {
+  var sep = this._options.sep
+  return sep
+    + this._prefix
+    + sep
+    + key
+}
+
+SDB._getOptsAndCb = function (opts, cb) {
+  if (typeof opts == 'function') {
+    cb = opts
+    opts = {}
+  }
+  return { opts: xtend(opts, this._options), cb: cb }
+}
+
+SDB.sublevel = function (prefix, options) {
+  if(this.sublevels[prefix])
+    return this.sublevels[prefix]
+  return new SubDB(this, prefix, options || this._options)
+}
+
+SDB.put = function (key, value, opts, cb) {
+  var res = this._getOptsAndCb(opts, cb)
+  this._root.put(this.prefix(key), value, res.opts, res.cb)
+}
+
+SDB.get = function (key, opts, cb) {
+  var res = this._getOptsAndCb(opts, cb)
+  this._root.get(this.prefix(key), res.opts, res.cb)
+}
+
+SDB.del = function (key, opts, cb) {
+  var res = this._getOptsAndCb(opts, cb)
+  this._root.del(this.prefix(key), res.opts, res.cb)
+}
+
+SDB.batch = function (changes, opts, cb) {
+  if(!Array.isArray(changes))
+    return new Batch(this)
+  var self = this,
+      res = this._getOptsAndCb(opts, cb)
+  changes.forEach(function (ch) {
+
+    //OH YEAH, WE NEED TO VALIDATE THAT UPDATING THIS KEY/PREFIX IS ALLOWED
+    if('string' === typeof ch.prefix)
+      ch.key = ch.prefix + ch.key
+    else
+      ch.key = (ch.prefix || self).prefix(ch.key)
+
+    if(ch.prefix) ch.prefix = null
+  })
+  this._root.batch(changes, res.opts, res.cb)
+}
+
+SDB._getKeyEncoding = function () {
+  if(this.options.keyEncoding)
+    return this.options.keyEncoding
+  if(this._parent && this._parent._getKeyEncoding)
+    return this._parent._getKeyEncoding()
+}
+
+SDB._getValueEncoding = function () {
+  if(this.options.valueEncoding)
+    return this.options.valueEncoding
+  if(this._parent && this._parent._getValueEncoding)
+    return this._parent._getValueEncoding()
+}
+
+SDB.prefix = function (key) {
+  var sep = this._options.sep
+  return this._parent.prefix() + sep + this._prefix + sep + (key || '')
+}
+
+SDB.keyStream =
+SDB.createKeyStream = function (opts) {
+  opts = opts || {}
+  opts.keys = true
+  opts.values = false
+  return this.createReadStream(opts)
+}
+
+SDB.valueStream =
+SDB.createValueStream = function (opts) {
+  opts = opts || {}
+  opts.keys = false
+  opts.values = true
+  opts.keys = false
+  return this.createReadStream(opts)
+}
+
+function selectivelyMerge(_opts, opts) {
+  [ 'valueEncoding'
+  , 'encoding'
+  , 'keyEncoding'
+  , 'reverse'
+  , 'values'
+  , 'keys'
+  , 'limit'
+  , 'fillCache'
+  ]
+  .forEach(function (k) {
+    if (opts.hasOwnProperty(k)) _opts[k] = opts[k]
+  })
+}
+
+SDB.readStream =
+SDB.createReadStream = function (opts) {
+  opts = opts || {}
+  var r = root(this)
+  var p = this.prefix()
+
+  var _opts = ranges.prefix(opts, p)
+  selectivelyMerge(_opts, xtend(opts, this._options))
+
+  var s = r.createReadStream(_opts)
+
+  if(_opts.values === false) {
+    var read = s.read
+    if (read) {
+      s.read = function (size) {
+        var val = read.call(this, size)
+        if (val) val = val.substring(p.length)
+        return val
+      }
+    } else {
+      var emit = s.emit
+      s.emit = function (event, val) {
+        if(event === 'data') {
+          emit.call(this, 'data', val.substring(p.length))
+        } else
+          emit.call(this, event, val)
+      }
+    }
+    return s
+  } else if(_opts.keys === false)
+    return s
+  else {
+    var read = s.read
+    if (read) {
+      s.read = function (size) {
+        var d = read.call(this, size)
+        if (d) d.key = d.key.substring(p.length)
+        return d
+      }
+    } else {
+      s.on('data', function (d) {
+        //mutate the prefix!
+        //this doesn't work for createKeyStream admittedly.
+        d.key = d.key.substring(p.length)
+      })
+    }
+    return s
+  }
+}
+
+
+SDB.writeStream =
+SDB.createWriteStream = function () {
+  var r = root(this)
+  var p = this.prefix()
+  var ws = r.createWriteStream.apply(r, arguments)
+  var write = ws.write
+
+  var encoding = this._options.encoding
+  var valueEncoding = this._options.valueEncoding
+  var keyEncoding = this._options.keyEncoding
+
+  // slight optimization, if no encoding was specified at all,
+  // which will be the case most times, make write not check at all
+  var nocheck = !encoding && !valueEncoding && !keyEncoding
+
+  ws.write = nocheck
+    ? function (data) {
+        data.key = p + data.key
+        return write.call(ws, data)
+      }
+    : function (data) {
+        data.key = p + data.key
+
+        // not merging all options here since this happens on every write and things could get slowed down
+        // at this point we only consider encoding important to propagate
+        if (encoding && typeof data.encoding === 'undefined')
+          data.encoding = encoding
+        if (valueEncoding && typeof data.valueEncoding === 'undefined')
+          data.valueEncoding = valueEncoding
+        if (keyEncoding && typeof data.keyEncoding === 'undefined')
+          data.keyEncoding = keyEncoding
+
+        return write.call(ws, data)
+      }
+  return ws
+}
+
+SDB.approximateSize = function () {
+  var r = root(db)
+  return r.approximateSize.apply(r, arguments)
+}
+
+function root(db) {
+  if(!db._parent) return db
+  return root(db._parent)
+}
+
+SDB.pre = function (range, hook) {
+  if(!hook) hook = range, range = null
+  range = ranges.prefix(range, this.prefix(), this._options.sep)
+  var r = root(this._parent)
+  var p = this.prefix()
+  return r.hooks.pre(fixRange(range), function (ch, add, batch) {
+    hook({
+      key: ch.key.substring(p.length),
+      value: ch.value,
+      type: ch.type
+    }, function (ch, _p) {
+      //maybe remove the second add arg now
+      //that op can have prefix?
+      add(ch, ch.prefix ? _p : (_p || p))
+    }, batch)
+  })
+}
+
+SDB.post = function (range, hook) {
+  if(!hook) hook = range, range = null
+  var r = root(this._parent)
+  var p = this.prefix()
+  range = ranges.prefix(range, p, this._options.sep)
+  return r.hooks.post(fixRange(range), function (data) {
+    hook({key: data.key.substring(p.length), value: data.value, type: data.type})
+  })
+}
+
+var exports = module.exports = SubDB
+
+
+},{"./batch":37,"events":7,"level-fix-range":39,"string-range":42,"util":22,"xtend":44}],50:[function(require,module,exports){
 /* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License
@@ -6827,7 +8494,7 @@ Batch.prototype.write = function (callback) {
 
 module.exports = Batch
 
-},{"./errors":38,"./util":41}],38:[function(require,module,exports){
+},{"./errors":51,"./util":54}],51:[function(require,module,exports){
 /* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License
@@ -6850,7 +8517,7 @@ module.exports = {
   , NotFoundError       : NotFoundError
   , EncodingError       : createError('EncodingError', LevelUPError)
 }
-},{"errno":75}],39:[function(require,module,exports){
+},{"errno":88}],52:[function(require,module,exports){
 (function (process){/* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License
@@ -7287,7 +8954,7 @@ module.exports.destroy = utilStatic('destroy')
 // DEPRECATED: prefer accessing LevelDOWN for this: require('leveldown').repair()
 module.exports.repair  = utilStatic('repair')
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
-},{"./batch":37,"./errors":38,"./read-stream":40,"./util":41,"./write-stream":42,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"deferred-leveldown":57,"events":7,"prr":76,"util":22,"xtend":85}],40:[function(require,module,exports){
+},{"./batch":50,"./errors":51,"./read-stream":53,"./util":54,"./write-stream":55,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"deferred-leveldown":70,"events":7,"prr":89,"util":22,"xtend":98}],53:[function(require,module,exports){
 /* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License <https://github.com/rvagg/node-levelup/blob/master/LICENSE>
@@ -7409,7 +9076,7 @@ ReadStream.prototype.toString = function () {
 
 module.exports = ReadStream
 
-},{"./errors":38,"./util":41,"readable-stream":83,"util":22,"xtend":85}],41:[function(require,module,exports){
+},{"./errors":51,"./util":54,"readable-stream":96,"util":22,"xtend":98}],54:[function(require,module,exports){
 /* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License
@@ -7592,7 +9259,7 @@ module.exports = {
   , decodeKey       : decodeKey
 }
 
-},{"../package.json":90,"./errors":38,"bops":43,"leveldown":6,"leveldown/package":6,"semver":6,"xtend":85}],42:[function(require,module,exports){
+},{"../package.json":103,"./errors":51,"bops":56,"leveldown":6,"leveldown/package":6,"semver":6,"xtend":98}],55:[function(require,module,exports){
 (function (process,global){/* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License
@@ -7772,7 +9439,7 @@ WriteStream.prototype.toString = function () {
 
 module.exports = WriteStream
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./util":41,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"concat-stream":56,"stream":14,"util":22,"xtend":85}],43:[function(require,module,exports){
+},{"./util":54,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"concat-stream":69,"stream":14,"util":22,"xtend":98}],56:[function(require,module,exports){
 var proto = {}
 module.exports = proto
 
@@ -7793,7 +9460,7 @@ function mix(from, into) {
   }
 }
 
-},{"./copy.js":46,"./create.js":47,"./from.js":48,"./is.js":49,"./join.js":50,"./read.js":52,"./subarray.js":53,"./to.js":54,"./write.js":55}],44:[function(require,module,exports){
+},{"./copy.js":59,"./create.js":60,"./from.js":61,"./is.js":62,"./join.js":63,"./read.js":65,"./subarray.js":66,"./to.js":67,"./write.js":68}],57:[function(require,module,exports){
 (function (exports) {
 	'use strict';
 
@@ -7879,7 +9546,7 @@ function mix(from, into) {
 	module.exports.fromByteArray = uint8ToBase64;
 }());
 
-},{}],45:[function(require,module,exports){
+},{}],58:[function(require,module,exports){
 module.exports = to_utf8
 
 var out = []
@@ -7954,7 +9621,7 @@ function reduced(list) {
   return out
 }
 
-},{}],46:[function(require,module,exports){
+},{}],59:[function(require,module,exports){
 module.exports = copy
 
 var slice = [].slice
@@ -8008,12 +9675,12 @@ function slow_copy(from, to, j, i, jend) {
   }
 }
 
-},{}],47:[function(require,module,exports){
+},{}],60:[function(require,module,exports){
 module.exports = function(size) {
   return new Uint8Array(size)
 }
 
-},{}],48:[function(require,module,exports){
+},{}],61:[function(require,module,exports){
 module.exports = from
 
 var base64 = require('base64-js')
@@ -8149,13 +9816,13 @@ function from_base64(str) {
   return new Uint8Array(base64.toByteArray(str)) 
 }
 
-},{"base64-js":44}],49:[function(require,module,exports){
+},{"base64-js":57}],62:[function(require,module,exports){
 
 module.exports = function(buffer) {
   return buffer instanceof Uint8Array;
 }
 
-},{}],50:[function(require,module,exports){
+},{}],63:[function(require,module,exports){
 module.exports = join
 
 function join(targets, hint) {
@@ -8193,7 +9860,7 @@ function get_length(targets) {
   return size
 }
 
-},{}],51:[function(require,module,exports){
+},{}],64:[function(require,module,exports){
 var proto
   , map
 
@@ -8215,7 +9882,7 @@ function get(target) {
   return out
 }
 
-},{}],52:[function(require,module,exports){
+},{}],65:[function(require,module,exports){
 module.exports = {
     readUInt8:      read_uint8
   , readInt8:       read_int8
@@ -8304,14 +9971,14 @@ function read_double_be(target, at) {
   return dv.getFloat64(at + target.byteOffset, false)
 }
 
-},{"./mapped.js":51}],53:[function(require,module,exports){
+},{"./mapped.js":64}],66:[function(require,module,exports){
 module.exports = subarray
 
 function subarray(buf, from, to) {
   return buf.subarray(from || 0, to || buf.length)
 }
 
-},{}],54:[function(require,module,exports){
+},{}],67:[function(require,module,exports){
 module.exports = to
 
 var base64 = require('base64-js')
@@ -8349,7 +10016,7 @@ function to_base64(buf) {
 }
 
 
-},{"base64-js":44,"to-utf8":45}],55:[function(require,module,exports){
+},{"base64-js":57,"to-utf8":58}],68:[function(require,module,exports){
 module.exports = {
     writeUInt8:      write_uint8
   , writeInt8:       write_int8
@@ -8437,7 +10104,7 @@ function write_double_be(target, value, at) {
   return dv.setFloat64(at + target.byteOffset, value, false)
 }
 
-},{"./mapped.js":51}],56:[function(require,module,exports){
+},{"./mapped.js":64}],69:[function(require,module,exports){
 (function (Buffer){var stream = require('stream')
 var util = require('util')
 
@@ -8489,7 +10156,7 @@ module.exports = function(cb) {
 
 module.exports.ConcatStream = ConcatStream
 }).call(this,require("buffer").Buffer)
-},{"buffer":10,"stream":14,"util":22}],57:[function(require,module,exports){
+},{"buffer":10,"stream":14,"util":22}],70:[function(require,module,exports){
 (function (process){var util              = require('util')
   , bops              = require('bops')
   , AbstractLevelDOWN = require('abstract-leveldown').AbstractLevelDOWN
@@ -8538,11 +10205,11 @@ DeferredLevelDOWN.prototype._iterator = function () {
 }
 
 module.exports = DeferredLevelDOWN}).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"abstract-leveldown":60,"bops":61,"util":22}],58:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"abstract-leveldown":73,"bops":74,"util":22}],71:[function(require,module,exports){
 module.exports=require(26)
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],59:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],72:[function(require,module,exports){
 module.exports=require(27)
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],60:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],73:[function(require,module,exports){
 (function (process,Buffer){/* Copyright (c) 2013 Rod Vagg, MIT License */
 
 var AbstractIterator     = require('./abstract-iterator')
@@ -8727,17 +10394,17 @@ module.exports.AbstractLevelDOWN    = AbstractLevelDOWN
 module.exports.AbstractIterator     = AbstractIterator
 module.exports.AbstractChainedBatch = AbstractChainedBatch
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),require("buffer").Buffer)
-},{"./abstract-chained-batch":58,"./abstract-iterator":59,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"buffer":10}],61:[function(require,module,exports){
-arguments[4][43][0].apply(exports,arguments)
-},{"./copy.js":64,"./create.js":65,"./from.js":66,"./is.js":67,"./join.js":68,"./read.js":70,"./subarray.js":71,"./to.js":72,"./write.js":73}],62:[function(require,module,exports){
-module.exports=require(44)
-},{}],63:[function(require,module,exports){
-module.exports=require(45)
-},{}],64:[function(require,module,exports){
-module.exports=require(46)
-},{}],65:[function(require,module,exports){
-module.exports=require(47)
-},{}],66:[function(require,module,exports){
+},{"./abstract-chained-batch":71,"./abstract-iterator":72,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"buffer":10}],74:[function(require,module,exports){
+arguments[4][56][0].apply(exports,arguments)
+},{"./copy.js":77,"./create.js":78,"./from.js":79,"./is.js":80,"./join.js":81,"./read.js":83,"./subarray.js":84,"./to.js":85,"./write.js":86}],75:[function(require,module,exports){
+module.exports=require(57)
+},{}],76:[function(require,module,exports){
+module.exports=require(58)
+},{}],77:[function(require,module,exports){
+module.exports=require(59)
+},{}],78:[function(require,module,exports){
+module.exports=require(60)
+},{}],79:[function(require,module,exports){
 module.exports = from
 
 var base64 = require('base64-js')
@@ -8797,21 +10464,21 @@ function from_base64(str) {
   return new Uint8Array(base64.toByteArray(str)) 
 }
 
-},{"base64-js":62}],67:[function(require,module,exports){
-module.exports=require(49)
-},{}],68:[function(require,module,exports){
-module.exports=require(50)
-},{}],69:[function(require,module,exports){
-module.exports=require(51)
-},{}],70:[function(require,module,exports){
-module.exports=require(52)
-},{"./mapped.js":69}],71:[function(require,module,exports){
-module.exports=require(53)
-},{}],72:[function(require,module,exports){
-module.exports=require(54)
-},{"base64-js":62,"to-utf8":63}],73:[function(require,module,exports){
-module.exports=require(55)
-},{"./mapped.js":69}],74:[function(require,module,exports){
+},{"base64-js":75}],80:[function(require,module,exports){
+module.exports=require(62)
+},{}],81:[function(require,module,exports){
+module.exports=require(63)
+},{}],82:[function(require,module,exports){
+module.exports=require(64)
+},{}],83:[function(require,module,exports){
+module.exports=require(65)
+},{"./mapped.js":82}],84:[function(require,module,exports){
+module.exports=require(66)
+},{}],85:[function(require,module,exports){
+module.exports=require(67)
+},{"base64-js":75,"to-utf8":76}],86:[function(require,module,exports){
+module.exports=require(68)
+},{"./mapped.js":82}],87:[function(require,module,exports){
 const prr = require('prr')
 
 function init (type, message, cause) {
@@ -8868,7 +10535,7 @@ module.exports = function (errno) {
   }
 }
 
-},{"prr":76}],75:[function(require,module,exports){
+},{"prr":89}],88:[function(require,module,exports){
 var all = module.exports.all = [
  {
   "errno": -1,
@@ -9296,7 +10963,7 @@ module.exports.code = {
 
 module.exports.custom = require("./custom")(module.exports)
 module.exports.create = module.exports.custom.createError
-},{"./custom":74}],76:[function(require,module,exports){
+},{"./custom":87}],89:[function(require,module,exports){
 /*!
   * prr
   * (c) 2013 Rod Vagg <rod@vagg.org>
@@ -9360,7 +11027,7 @@ module.exports.create = module.exports.custom.createError
 
   return prr
 })
-},{}],77:[function(require,module,exports){
+},{}],90:[function(require,module,exports){
 (function (process){// Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9431,7 +11098,7 @@ function onend() {
   process.nextTick(this.end.bind(this));
 }
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
-},{"./_stream_readable":79,"./_stream_writable":81,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"util":22}],78:[function(require,module,exports){
+},{"./_stream_readable":92,"./_stream_writable":94,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"util":22}],91:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9474,7 +11141,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./_stream_transform":80,"util":22}],79:[function(require,module,exports){
+},{"./_stream_transform":93,"util":22}],92:[function(require,module,exports){
 (function (process,Buffer){// Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -10403,7 +12070,7 @@ function endReadable(stream) {
   }
 }
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),require("buffer").Buffer)
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"buffer":10,"events":7,"stream":14,"string_decoder/":82,"util":22}],80:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"buffer":10,"events":7,"stream":14,"string_decoder/":95,"util":22}],93:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -10610,7 +12277,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./_stream_duplex":77,"util":22}],81:[function(require,module,exports){
+},{"./_stream_duplex":90,"util":22}],94:[function(require,module,exports){
 (function (process,Buffer){// Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -10983,7 +12650,7 @@ function endWritable(stream, state, cb) {
   state.ended = true;
 }
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),require("buffer").Buffer)
-},{"./_stream_duplex":77,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"assert":3,"buffer":10,"stream":14,"util":22}],82:[function(require,module,exports){
+},{"./_stream_duplex":90,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"assert":3,"buffer":10,"stream":14,"util":22}],95:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -11185,7 +12852,7 @@ function base64DetectIncompleteChar(buffer) {
   return incomplete;
 }
 
-},{"buffer":10}],83:[function(require,module,exports){
+},{"buffer":10}],96:[function(require,module,exports){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Readable = exports;
 exports.Writable = require('./lib/_stream_writable.js');
@@ -11193,19 +12860,19 @@ exports.Duplex = require('./lib/_stream_duplex.js');
 exports.Transform = require('./lib/_stream_transform.js');
 exports.PassThrough = require('./lib/_stream_passthrough.js');
 
-},{"./lib/_stream_duplex.js":77,"./lib/_stream_passthrough.js":78,"./lib/_stream_readable.js":79,"./lib/_stream_transform.js":80,"./lib/_stream_writable.js":81}],84:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":90,"./lib/_stream_passthrough.js":91,"./lib/_stream_readable.js":92,"./lib/_stream_transform.js":93,"./lib/_stream_writable.js":94}],97:[function(require,module,exports){
 module.exports=require(29)
-},{}],85:[function(require,module,exports){
+},{}],98:[function(require,module,exports){
 arguments[4][30][0].apply(exports,arguments)
-},{"./has-keys":84,"object-keys":87}],86:[function(require,module,exports){
+},{"./has-keys":97,"object-keys":100}],99:[function(require,module,exports){
 module.exports=require(31)
-},{}],87:[function(require,module,exports){
+},{}],100:[function(require,module,exports){
 arguments[4][32][0].apply(exports,arguments)
-},{"./shim":89}],88:[function(require,module,exports){
+},{"./shim":102}],101:[function(require,module,exports){
 module.exports=require(33)
-},{}],89:[function(require,module,exports){
+},{}],102:[function(require,module,exports){
 module.exports=require(34)
-},{"./foreach":86,"./isArguments":88}],90:[function(require,module,exports){
+},{"./foreach":99,"./isArguments":101}],103:[function(require,module,exports){
 module.exports={
   "name": "levelup",
   "description": "Fast & simple storage - a Node.js-style LevelDB wrapper",
@@ -11340,7 +13007,7 @@ module.exports={
   "_from": "levelup@"
 }
 
-},{}],91:[function(require,module,exports){
+},{}],104:[function(require,module,exports){
 (function (process,global){var util              = require('util')
   , bops              = require('bops')
   , AbstractLevelDOWN = require('abstract-leveldown').AbstractLevelDOWN
@@ -11513,48 +13180,48 @@ MemDOWN.prototype._isBuffer = function (obj) {
 
 module.exports = MemDOWN
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"abstract-leveldown":94,"bops":101,"util":22}],92:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"abstract-leveldown":107,"bops":114,"util":22}],105:[function(require,module,exports){
 module.exports=require(26)
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],93:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],106:[function(require,module,exports){
 module.exports=require(27)
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],94:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],107:[function(require,module,exports){
 arguments[4][28][0].apply(exports,arguments)
-},{"./abstract-chained-batch":92,"./abstract-iterator":93,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"buffer":10,"xtend":96}],95:[function(require,module,exports){
+},{"./abstract-chained-batch":105,"./abstract-iterator":106,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"buffer":10,"xtend":109}],108:[function(require,module,exports){
 module.exports=require(29)
-},{}],96:[function(require,module,exports){
-arguments[4][30][0].apply(exports,arguments)
-},{"./has-keys":95,"object-keys":98}],97:[function(require,module,exports){
-module.exports=require(31)
-},{}],98:[function(require,module,exports){
-arguments[4][32][0].apply(exports,arguments)
-},{"./shim":100}],99:[function(require,module,exports){
-module.exports=require(33)
-},{}],100:[function(require,module,exports){
-module.exports=require(34)
-},{"./foreach":97,"./isArguments":99}],101:[function(require,module,exports){
-arguments[4][43][0].apply(exports,arguments)
-},{"./copy.js":104,"./create.js":105,"./from.js":106,"./is.js":107,"./join.js":108,"./read.js":110,"./subarray.js":111,"./to.js":112,"./write.js":113}],102:[function(require,module,exports){
-module.exports=require(44)
-},{}],103:[function(require,module,exports){
-module.exports=require(45)
-},{}],104:[function(require,module,exports){
-module.exports=require(46)
-},{}],105:[function(require,module,exports){
-module.exports=require(47)
-},{}],106:[function(require,module,exports){
-module.exports=require(48)
-},{"base64-js":102}],107:[function(require,module,exports){
-module.exports=require(49)
-},{}],108:[function(require,module,exports){
-module.exports=require(50)
 },{}],109:[function(require,module,exports){
-module.exports=require(51)
-},{}],110:[function(require,module,exports){
-module.exports=require(52)
-},{"./mapped.js":109}],111:[function(require,module,exports){
-module.exports=require(53)
-},{}],112:[function(require,module,exports){
-module.exports=require(54)
-},{"base64-js":102,"to-utf8":103}],113:[function(require,module,exports){
-module.exports=require(55)
-},{"./mapped.js":109}]},{},[1])
+arguments[4][30][0].apply(exports,arguments)
+},{"./has-keys":108,"object-keys":111}],110:[function(require,module,exports){
+module.exports=require(31)
+},{}],111:[function(require,module,exports){
+arguments[4][32][0].apply(exports,arguments)
+},{"./shim":113}],112:[function(require,module,exports){
+module.exports=require(33)
+},{}],113:[function(require,module,exports){
+module.exports=require(34)
+},{"./foreach":110,"./isArguments":112}],114:[function(require,module,exports){
+arguments[4][56][0].apply(exports,arguments)
+},{"./copy.js":117,"./create.js":118,"./from.js":119,"./is.js":120,"./join.js":121,"./read.js":123,"./subarray.js":124,"./to.js":125,"./write.js":126}],115:[function(require,module,exports){
+module.exports=require(57)
+},{}],116:[function(require,module,exports){
+module.exports=require(58)
+},{}],117:[function(require,module,exports){
+module.exports=require(59)
+},{}],118:[function(require,module,exports){
+module.exports=require(60)
+},{}],119:[function(require,module,exports){
+module.exports=require(61)
+},{"base64-js":115}],120:[function(require,module,exports){
+module.exports=require(62)
+},{}],121:[function(require,module,exports){
+module.exports=require(63)
+},{}],122:[function(require,module,exports){
+module.exports=require(64)
+},{}],123:[function(require,module,exports){
+module.exports=require(65)
+},{"./mapped.js":122}],124:[function(require,module,exports){
+module.exports=require(66)
+},{}],125:[function(require,module,exports){
+module.exports=require(67)
+},{"base64-js":115,"to-utf8":116}],126:[function(require,module,exports){
+module.exports=require(68)
+},{"./mapped.js":122}]},{},[1])

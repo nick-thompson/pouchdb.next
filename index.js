@@ -52,7 +52,7 @@ PouchDB.prototype._insert = function(docs, options, callback) {
   docs.forEach(function(doc) {
     // Obviously we'll use the bulk api here, but, for simplicity's sake...
     doc._rev = 'randomhashthing';
-    this._store.put(doc._id, doc, null, function(err) {
+    this._docs.put(doc._id, doc, null, function(err) {
       if (err) return callback.call(null, err);
       callback.call(null, null, {
         ok: true,
@@ -60,7 +60,7 @@ PouchDB.prototype._insert = function(docs, options, callback) {
         rev: 'randomhashthing'
       });
     });
-  });
+  }.bind(this));
 };
 
 PouchDB.prototype.put = function(doc, opts, callback) {
@@ -75,7 +75,7 @@ PouchDB.prototype.put = function(doc, opts, callback) {
 
 PouchDB.prototype.get = function(id, opts, callback) {
   callback = callback || opts;
-  this._store.get(id, null, callback);
+  this._docs.get(id, null, callback);
 };
 
 module.exports = PouchDB;
