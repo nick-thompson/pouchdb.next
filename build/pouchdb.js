@@ -1,25 +1,47 @@
-require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({"bzp/He":[function(require,module,exports){
+(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
 
 var PouchDB = require('./');
-var leveljs = require('level-js');
 var extend = require('extend');
 
-// We can do some checking here to choose a better backend than
-// IndexedDB, but for simplicity's sake I'm just going to assume we
-// decided upon IndexedDB in your browser.
+var leveljs = require('level-js');
+var memdown = require('memdown');
 
+// Some hax to help me make this example more clear
+var BROWSER_SUPPORTS_IDB = true;
+
+// So the point here is that the auto-detection and selection of preferred
+// pouchdb adapter is done outside the core PouchDB module, and rather it's
+// done here in the browserify entrypoint because this is the only place that
+// it's relevant.
+//
+// That is to say that, if you're going to use PouchDB in node, we'll ask that
+// you specify your own adapter (it's super easy, commonjs, etc), and if you
+// want to use the nicely pre-built pouchdb.js, we've already prepared several
+// adapters and chosen the best one for you.
+
+var preferredAdapter = BROWSER_SUPPORTS_IDB
+  ? leveljs
+  : memdown;
+
+// We expose a factory method for generating pouchdb instances pre-allocated
+// with the preferred adaptor. We can also expose the PouchDB constructor itself
+// in case a user wants to specify their own adapter on the client, but, again,
+// this is just an example for demonstration's sake.
 function factory(location, options) {
   opts = extend(opts, {
-    db: leveljs
+    db: preferredAdapter
   });
   return new PouchDB(location, opts);
 }
 
-module.exports = factory;
+// Do some classic multi-code-style exposing of the factory function here.
+if (typeof module !== 'undefined' && typeof module.exports !== 'undefined') {
+  module.exports = factory;
+} else {
+  window.pouchdb = factory;
+}
 
-},{"./":3,"extend":24,"level-js":25}],"PouchDB":[function(require,module,exports){
-module.exports=require('bzp/He');
-},{}],3:[function(require,module,exports){
+},{"./":2,"extend":23,"level-js":24,"memdown":91}],2:[function(require,module,exports){
 
 var levelup = require('levelup');
 var extend = require('extend');
@@ -51,7 +73,7 @@ PouchDB.prototype.get = function(id, opts, callback) {
 
 module.exports = PouchDB;
 
-},{"extend":24,"levelup":40}],4:[function(require,module,exports){
+},{"extend":23,"levelup":39}],3:[function(require,module,exports){
 // http://wiki.commonjs.org/wiki/Unit_Testing/1.0
 //
 // THIS IS NOT TESTED NOR LIKELY TO WORK OUTSIDE V8!
@@ -413,14 +435,14 @@ var objectKeys = Object.keys || function (obj) {
   return keys;
 };
 
-},{"util/":6}],5:[function(require,module,exports){
+},{"util/":5}],4:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],6:[function(require,module,exports){
+},{}],5:[function(require,module,exports){
 (function (process,global){// Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -1008,9 +1030,9 @@ function hasOwnProperty(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":5,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10,"inherits":9}],7:[function(require,module,exports){
+},{"./support/isBuffer":4,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"inherits":8}],6:[function(require,module,exports){
 
-},{}],8:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -1312,7 +1334,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],9:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -1337,7 +1359,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],10:[function(require,module,exports){
+},{}],9:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -1392,7 +1414,7 @@ process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
 
-},{}],11:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 var base64 = require('base64-js')
 var ieee754 = require('ieee754')
 
@@ -2450,7 +2472,7 @@ function assert (test, message) {
   if (!test) throw new Error(message || 'Failed assertion')
 }
 
-},{"base64-js":12,"ieee754":13}],12:[function(require,module,exports){
+},{"base64-js":11,"ieee754":12}],11:[function(require,module,exports){
 var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 ;(function (exports) {
@@ -2573,7 +2595,7 @@ var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 	module.exports.fromByteArray = uint8ToBase64
 }())
 
-},{}],13:[function(require,module,exports){
+},{}],12:[function(require,module,exports){
 exports.read = function(buffer, offset, isLE, mLen, nBytes) {
   var e, m,
       eLen = nBytes * 8 - mLen - 1,
@@ -2659,7 +2681,7 @@ exports.write = function(buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128;
 };
 
-},{}],14:[function(require,module,exports){
+},{}],13:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2733,7 +2755,7 @@ function onend() {
   });
 }
 
-},{"./readable.js":18,"./writable.js":20,"inherits":9,"process/browser.js":16}],15:[function(require,module,exports){
+},{"./readable.js":17,"./writable.js":19,"inherits":8,"process/browser.js":15}],14:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2862,9 +2884,9 @@ Stream.prototype.pipe = function(dest, options) {
   return dest;
 };
 
-},{"./duplex.js":14,"./passthrough.js":17,"./readable.js":18,"./transform.js":19,"./writable.js":20,"events":8,"inherits":9}],16:[function(require,module,exports){
-module.exports=require(10)
-},{}],17:[function(require,module,exports){
+},{"./duplex.js":13,"./passthrough.js":16,"./readable.js":17,"./transform.js":18,"./writable.js":19,"events":7,"inherits":8}],15:[function(require,module,exports){
+module.exports=require(9)
+},{}],16:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2907,7 +2929,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./transform.js":19,"inherits":9}],18:[function(require,module,exports){
+},{"./transform.js":18,"inherits":8}],17:[function(require,module,exports){
 (function (process){// Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3842,7 +3864,7 @@ function indexOf (xs, x) {
   return -1;
 }
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
-},{"./index.js":15,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10,"buffer":11,"events":8,"inherits":9,"process/browser.js":16,"string_decoder":21}],19:[function(require,module,exports){
+},{"./index.js":14,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"buffer":10,"events":7,"inherits":8,"process/browser.js":15,"string_decoder":20}],18:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4048,7 +4070,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./duplex.js":14,"inherits":9}],20:[function(require,module,exports){
+},{"./duplex.js":13,"inherits":8}],19:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4436,7 +4458,7 @@ function endWritable(stream, state, cb) {
   state.ended = true;
 }
 
-},{"./index.js":15,"buffer":11,"inherits":9,"process/browser.js":16}],21:[function(require,module,exports){
+},{"./index.js":14,"buffer":10,"inherits":8,"process/browser.js":15}],20:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4629,11 +4651,11 @@ function base64DetectIncompleteChar(buffer) {
   return incomplete;
 }
 
-},{"buffer":11}],22:[function(require,module,exports){
+},{"buffer":10}],21:[function(require,module,exports){
+module.exports=require(4)
+},{}],22:[function(require,module,exports){
 module.exports=require(5)
-},{}],23:[function(require,module,exports){
-module.exports=require(6)
-},{"./support/isBuffer":22,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10,"inherits":9}],24:[function(require,module,exports){
+},{"./support/isBuffer":21,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"inherits":8}],23:[function(require,module,exports){
 var hasOwn = Object.prototype.hasOwnProperty;
 var toString = Object.prototype.toString;
 
@@ -4713,7 +4735,7 @@ module.exports = function extend() {
 	return target;
 };
 
-},{}],25:[function(require,module,exports){
+},{}],24:[function(require,module,exports){
 (function (Buffer){module.exports = Level
 
 var IDB = require('idb-wrapper')
@@ -4830,7 +4852,7 @@ var checkKeyValue = Level.prototype._checkKeyValue = function (obj, type) {
     return new Error(type + ' cannot be an empty Array')
 }
 }).call(this,require("buffer").Buffer)
-},{"./iterator":26,"abstract-leveldown":29,"buffer":11,"idb-wrapper":36,"isbuffer":37,"util":23}],26:[function(require,module,exports){
+},{"./iterator":25,"abstract-leveldown":28,"buffer":10,"idb-wrapper":35,"isbuffer":36,"util":22}],25:[function(require,module,exports){
 var util = require('util')
 var AbstractIterator  = require('abstract-leveldown').AbstractIterator
 module.exports = Iterator
@@ -4938,7 +4960,7 @@ Iterator.prototype._next = function (callback) {
   this.callback = callback
 }
 
-},{"abstract-leveldown":29,"util":23}],27:[function(require,module,exports){
+},{"abstract-leveldown":28,"util":22}],26:[function(require,module,exports){
 (function (process){/* Copyright (c) 2013 Rod Vagg, MIT License */
 
 function AbstractChainedBatch (db) {
@@ -5020,7 +5042,7 @@ AbstractChainedBatch.prototype.write = function (options, callback) {
 }
 
 module.exports = AbstractChainedBatch}).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10}],28:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],27:[function(require,module,exports){
 (function (process){/* Copyright (c) 2013 Rod Vagg, MIT License */
 
 function AbstractIterator (db) {
@@ -5071,7 +5093,7 @@ AbstractIterator.prototype.end = function (callback) {
 
 module.exports = AbstractIterator
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10}],29:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],28:[function(require,module,exports){
 (function (process,Buffer){/* Copyright (c) 2013 Rod Vagg, MIT License */
 
 var xtend                = require('xtend')
@@ -5331,7 +5353,7 @@ module.exports.AbstractLevelDOWN    = AbstractLevelDOWN
 module.exports.AbstractIterator     = AbstractIterator
 module.exports.AbstractChainedBatch = AbstractChainedBatch
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),require("buffer").Buffer)
-},{"./abstract-chained-batch":27,"./abstract-iterator":28,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10,"buffer":11,"xtend":31}],30:[function(require,module,exports){
+},{"./abstract-chained-batch":26,"./abstract-iterator":27,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"buffer":10,"xtend":30}],29:[function(require,module,exports){
 module.exports = hasKeys
 
 function hasKeys(source) {
@@ -5340,7 +5362,7 @@ function hasKeys(source) {
         typeof source === "function")
 }
 
-},{}],31:[function(require,module,exports){
+},{}],30:[function(require,module,exports){
 var Keys = require("object-keys")
 var hasKeys = require("./has-keys")
 
@@ -5367,7 +5389,7 @@ function extend() {
     return target
 }
 
-},{"./has-keys":30,"object-keys":33}],32:[function(require,module,exports){
+},{"./has-keys":29,"object-keys":32}],31:[function(require,module,exports){
 var hasOwn = Object.prototype.hasOwnProperty;
 var toString = Object.prototype.toString;
 
@@ -5409,11 +5431,11 @@ module.exports = function forEach(obj, fn) {
 };
 
 
-},{}],33:[function(require,module,exports){
+},{}],32:[function(require,module,exports){
 module.exports = Object.keys || require('./shim');
 
 
-},{"./shim":35}],34:[function(require,module,exports){
+},{"./shim":34}],33:[function(require,module,exports){
 var toString = Object.prototype.toString;
 
 module.exports = function isArguments(value) {
@@ -5431,7 +5453,7 @@ module.exports = function isArguments(value) {
 };
 
 
-},{}],35:[function(require,module,exports){
+},{}],34:[function(require,module,exports){
 (function () {
 	"use strict";
 
@@ -5495,7 +5517,7 @@ module.exports = function isArguments(value) {
 }());
 
 
-},{"./foreach":32,"./isArguments":34}],36:[function(require,module,exports){
+},{"./foreach":31,"./isArguments":33}],35:[function(require,module,exports){
 /*global window:false, self:false, define:false, module:false */
 
 /**
@@ -6715,7 +6737,7 @@ module.exports = function isArguments(value) {
 
 }, this);
 
-},{}],37:[function(require,module,exports){
+},{}],36:[function(require,module,exports){
 var Buffer = require('buffer').Buffer;
 
 module.exports = isBuffer;
@@ -6725,7 +6747,7 @@ function isBuffer (o) {
     || /\[object (.+Array|Array.+)\]/.test(Object.prototype.toString.call(o));
 }
 
-},{"buffer":11}],38:[function(require,module,exports){
+},{"buffer":10}],37:[function(require,module,exports){
 /* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License
@@ -6805,7 +6827,7 @@ Batch.prototype.write = function (callback) {
 
 module.exports = Batch
 
-},{"./errors":39,"./util":42}],39:[function(require,module,exports){
+},{"./errors":38,"./util":41}],38:[function(require,module,exports){
 /* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License
@@ -6828,7 +6850,7 @@ module.exports = {
   , NotFoundError       : NotFoundError
   , EncodingError       : createError('EncodingError', LevelUPError)
 }
-},{"errno":76}],40:[function(require,module,exports){
+},{"errno":75}],39:[function(require,module,exports){
 (function (process){/* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License
@@ -7265,7 +7287,7 @@ module.exports.destroy = utilStatic('destroy')
 // DEPRECATED: prefer accessing LevelDOWN for this: require('leveldown').repair()
 module.exports.repair  = utilStatic('repair')
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
-},{"./batch":38,"./errors":39,"./read-stream":41,"./util":42,"./write-stream":43,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10,"deferred-leveldown":58,"events":8,"prr":77,"util":23,"xtend":86}],41:[function(require,module,exports){
+},{"./batch":37,"./errors":38,"./read-stream":40,"./util":41,"./write-stream":42,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"deferred-leveldown":57,"events":7,"prr":76,"util":22,"xtend":85}],40:[function(require,module,exports){
 /* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License <https://github.com/rvagg/node-levelup/blob/master/LICENSE>
@@ -7387,7 +7409,7 @@ ReadStream.prototype.toString = function () {
 
 module.exports = ReadStream
 
-},{"./errors":39,"./util":42,"readable-stream":84,"util":23,"xtend":86}],42:[function(require,module,exports){
+},{"./errors":38,"./util":41,"readable-stream":83,"util":22,"xtend":85}],41:[function(require,module,exports){
 /* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License
@@ -7570,7 +7592,7 @@ module.exports = {
   , decodeKey       : decodeKey
 }
 
-},{"../package.json":91,"./errors":39,"bops":44,"leveldown":7,"leveldown/package":7,"semver":7,"xtend":86}],43:[function(require,module,exports){
+},{"../package.json":90,"./errors":38,"bops":43,"leveldown":6,"leveldown/package":6,"semver":6,"xtend":85}],42:[function(require,module,exports){
 (function (process,global){/* Copyright (c) 2012-2013 LevelUP contributors
  * See list at <https://github.com/rvagg/node-levelup#contributing>
  * MIT +no-false-attribs License
@@ -7750,7 +7772,7 @@ WriteStream.prototype.toString = function () {
 
 module.exports = WriteStream
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./util":42,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10,"concat-stream":57,"stream":15,"util":23,"xtend":86}],44:[function(require,module,exports){
+},{"./util":41,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"concat-stream":56,"stream":14,"util":22,"xtend":85}],43:[function(require,module,exports){
 var proto = {}
 module.exports = proto
 
@@ -7771,7 +7793,7 @@ function mix(from, into) {
   }
 }
 
-},{"./copy.js":47,"./create.js":48,"./from.js":49,"./is.js":50,"./join.js":51,"./read.js":53,"./subarray.js":54,"./to.js":55,"./write.js":56}],45:[function(require,module,exports){
+},{"./copy.js":46,"./create.js":47,"./from.js":48,"./is.js":49,"./join.js":50,"./read.js":52,"./subarray.js":53,"./to.js":54,"./write.js":55}],44:[function(require,module,exports){
 (function (exports) {
 	'use strict';
 
@@ -7857,7 +7879,7 @@ function mix(from, into) {
 	module.exports.fromByteArray = uint8ToBase64;
 }());
 
-},{}],46:[function(require,module,exports){
+},{}],45:[function(require,module,exports){
 module.exports = to_utf8
 
 var out = []
@@ -7932,7 +7954,7 @@ function reduced(list) {
   return out
 }
 
-},{}],47:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 module.exports = copy
 
 var slice = [].slice
@@ -7986,12 +8008,12 @@ function slow_copy(from, to, j, i, jend) {
   }
 }
 
-},{}],48:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 module.exports = function(size) {
   return new Uint8Array(size)
 }
 
-},{}],49:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
 module.exports = from
 
 var base64 = require('base64-js')
@@ -8127,13 +8149,13 @@ function from_base64(str) {
   return new Uint8Array(base64.toByteArray(str)) 
 }
 
-},{"base64-js":45}],50:[function(require,module,exports){
+},{"base64-js":44}],49:[function(require,module,exports){
 
 module.exports = function(buffer) {
   return buffer instanceof Uint8Array;
 }
 
-},{}],51:[function(require,module,exports){
+},{}],50:[function(require,module,exports){
 module.exports = join
 
 function join(targets, hint) {
@@ -8171,7 +8193,7 @@ function get_length(targets) {
   return size
 }
 
-},{}],52:[function(require,module,exports){
+},{}],51:[function(require,module,exports){
 var proto
   , map
 
@@ -8193,7 +8215,7 @@ function get(target) {
   return out
 }
 
-},{}],53:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 module.exports = {
     readUInt8:      read_uint8
   , readInt8:       read_int8
@@ -8282,14 +8304,14 @@ function read_double_be(target, at) {
   return dv.getFloat64(at + target.byteOffset, false)
 }
 
-},{"./mapped.js":52}],54:[function(require,module,exports){
+},{"./mapped.js":51}],53:[function(require,module,exports){
 module.exports = subarray
 
 function subarray(buf, from, to) {
   return buf.subarray(from || 0, to || buf.length)
 }
 
-},{}],55:[function(require,module,exports){
+},{}],54:[function(require,module,exports){
 module.exports = to
 
 var base64 = require('base64-js')
@@ -8327,7 +8349,7 @@ function to_base64(buf) {
 }
 
 
-},{"base64-js":45,"to-utf8":46}],56:[function(require,module,exports){
+},{"base64-js":44,"to-utf8":45}],55:[function(require,module,exports){
 module.exports = {
     writeUInt8:      write_uint8
   , writeInt8:       write_int8
@@ -8415,7 +8437,7 @@ function write_double_be(target, value, at) {
   return dv.setFloat64(at + target.byteOffset, value, false)
 }
 
-},{"./mapped.js":52}],57:[function(require,module,exports){
+},{"./mapped.js":51}],56:[function(require,module,exports){
 (function (Buffer){var stream = require('stream')
 var util = require('util')
 
@@ -8467,7 +8489,7 @@ module.exports = function(cb) {
 
 module.exports.ConcatStream = ConcatStream
 }).call(this,require("buffer").Buffer)
-},{"buffer":11,"stream":15,"util":23}],58:[function(require,module,exports){
+},{"buffer":10,"stream":14,"util":22}],57:[function(require,module,exports){
 (function (process){var util              = require('util')
   , bops              = require('bops')
   , AbstractLevelDOWN = require('abstract-leveldown').AbstractLevelDOWN
@@ -8516,11 +8538,11 @@ DeferredLevelDOWN.prototype._iterator = function () {
 }
 
 module.exports = DeferredLevelDOWN}).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10,"abstract-leveldown":61,"bops":62,"util":23}],59:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"abstract-leveldown":60,"bops":61,"util":22}],58:[function(require,module,exports){
+module.exports=require(26)
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],59:[function(require,module,exports){
 module.exports=require(27)
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10}],60:[function(require,module,exports){
-module.exports=require(28)
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10}],61:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],60:[function(require,module,exports){
 (function (process,Buffer){/* Copyright (c) 2013 Rod Vagg, MIT License */
 
 var AbstractIterator     = require('./abstract-iterator')
@@ -8705,17 +8727,17 @@ module.exports.AbstractLevelDOWN    = AbstractLevelDOWN
 module.exports.AbstractIterator     = AbstractIterator
 module.exports.AbstractChainedBatch = AbstractChainedBatch
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),require("buffer").Buffer)
-},{"./abstract-chained-batch":59,"./abstract-iterator":60,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10,"buffer":11}],62:[function(require,module,exports){
-arguments[4][44][0].apply(exports,arguments)
-},{"./copy.js":65,"./create.js":66,"./from.js":67,"./is.js":68,"./join.js":69,"./read.js":71,"./subarray.js":72,"./to.js":73,"./write.js":74}],63:[function(require,module,exports){
+},{"./abstract-chained-batch":58,"./abstract-iterator":59,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"buffer":10}],61:[function(require,module,exports){
+arguments[4][43][0].apply(exports,arguments)
+},{"./copy.js":64,"./create.js":65,"./from.js":66,"./is.js":67,"./join.js":68,"./read.js":70,"./subarray.js":71,"./to.js":72,"./write.js":73}],62:[function(require,module,exports){
+module.exports=require(44)
+},{}],63:[function(require,module,exports){
 module.exports=require(45)
 },{}],64:[function(require,module,exports){
 module.exports=require(46)
 },{}],65:[function(require,module,exports){
 module.exports=require(47)
 },{}],66:[function(require,module,exports){
-module.exports=require(48)
-},{}],67:[function(require,module,exports){
 module.exports = from
 
 var base64 = require('base64-js')
@@ -8775,21 +8797,21 @@ function from_base64(str) {
   return new Uint8Array(base64.toByteArray(str)) 
 }
 
-},{"base64-js":63}],68:[function(require,module,exports){
+},{"base64-js":62}],67:[function(require,module,exports){
+module.exports=require(49)
+},{}],68:[function(require,module,exports){
 module.exports=require(50)
 },{}],69:[function(require,module,exports){
 module.exports=require(51)
 },{}],70:[function(require,module,exports){
 module.exports=require(52)
-},{}],71:[function(require,module,exports){
+},{"./mapped.js":69}],71:[function(require,module,exports){
 module.exports=require(53)
-},{"./mapped.js":70}],72:[function(require,module,exports){
+},{}],72:[function(require,module,exports){
 module.exports=require(54)
-},{}],73:[function(require,module,exports){
+},{"base64-js":62,"to-utf8":63}],73:[function(require,module,exports){
 module.exports=require(55)
-},{"base64-js":63,"to-utf8":64}],74:[function(require,module,exports){
-module.exports=require(56)
-},{"./mapped.js":70}],75:[function(require,module,exports){
+},{"./mapped.js":69}],74:[function(require,module,exports){
 const prr = require('prr')
 
 function init (type, message, cause) {
@@ -8846,7 +8868,7 @@ module.exports = function (errno) {
   }
 }
 
-},{"prr":77}],76:[function(require,module,exports){
+},{"prr":76}],75:[function(require,module,exports){
 var all = module.exports.all = [
  {
   "errno": -1,
@@ -9274,7 +9296,7 @@ module.exports.code = {
 
 module.exports.custom = require("./custom")(module.exports)
 module.exports.create = module.exports.custom.createError
-},{"./custom":75}],77:[function(require,module,exports){
+},{"./custom":74}],76:[function(require,module,exports){
 /*!
   * prr
   * (c) 2013 Rod Vagg <rod@vagg.org>
@@ -9338,7 +9360,7 @@ module.exports.create = module.exports.custom.createError
 
   return prr
 })
-},{}],78:[function(require,module,exports){
+},{}],77:[function(require,module,exports){
 (function (process){// Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9409,7 +9431,7 @@ function onend() {
   process.nextTick(this.end.bind(this));
 }
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
-},{"./_stream_readable":80,"./_stream_writable":82,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10,"util":23}],79:[function(require,module,exports){
+},{"./_stream_readable":79,"./_stream_writable":81,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"util":22}],78:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9452,7 +9474,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./_stream_transform":81,"util":23}],80:[function(require,module,exports){
+},{"./_stream_transform":80,"util":22}],79:[function(require,module,exports){
 (function (process,Buffer){// Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -10381,7 +10403,7 @@ function endReadable(stream) {
   }
 }
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),require("buffer").Buffer)
-},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10,"buffer":11,"events":8,"stream":15,"string_decoder/":83,"util":23}],81:[function(require,module,exports){
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"buffer":10,"events":7,"stream":14,"string_decoder/":82,"util":22}],80:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -10588,7 +10610,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./_stream_duplex":78,"util":23}],82:[function(require,module,exports){
+},{"./_stream_duplex":77,"util":22}],81:[function(require,module,exports){
 (function (process,Buffer){// Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -10961,7 +10983,7 @@ function endWritable(stream, state, cb) {
   state.ended = true;
 }
 }).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),require("buffer").Buffer)
-},{"./_stream_duplex":78,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":10,"assert":4,"buffer":11,"stream":15,"util":23}],83:[function(require,module,exports){
+},{"./_stream_duplex":77,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"assert":3,"buffer":10,"stream":14,"util":22}],82:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -11163,7 +11185,7 @@ function base64DetectIncompleteChar(buffer) {
   return incomplete;
 }
 
-},{"buffer":11}],84:[function(require,module,exports){
+},{"buffer":10}],83:[function(require,module,exports){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Readable = exports;
 exports.Writable = require('./lib/_stream_writable.js');
@@ -11171,19 +11193,19 @@ exports.Duplex = require('./lib/_stream_duplex.js');
 exports.Transform = require('./lib/_stream_transform.js');
 exports.PassThrough = require('./lib/_stream_passthrough.js');
 
-},{"./lib/_stream_duplex.js":78,"./lib/_stream_passthrough.js":79,"./lib/_stream_readable.js":80,"./lib/_stream_transform.js":81,"./lib/_stream_writable.js":82}],85:[function(require,module,exports){
-module.exports=require(30)
-},{}],86:[function(require,module,exports){
-arguments[4][31][0].apply(exports,arguments)
-},{"./has-keys":85,"object-keys":88}],87:[function(require,module,exports){
-module.exports=require(32)
-},{}],88:[function(require,module,exports){
-arguments[4][33][0].apply(exports,arguments)
-},{"./shim":90}],89:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":77,"./lib/_stream_passthrough.js":78,"./lib/_stream_readable.js":79,"./lib/_stream_transform.js":80,"./lib/_stream_writable.js":81}],84:[function(require,module,exports){
+module.exports=require(29)
+},{}],85:[function(require,module,exports){
+arguments[4][30][0].apply(exports,arguments)
+},{"./has-keys":84,"object-keys":87}],86:[function(require,module,exports){
+module.exports=require(31)
+},{}],87:[function(require,module,exports){
+arguments[4][32][0].apply(exports,arguments)
+},{"./shim":89}],88:[function(require,module,exports){
+module.exports=require(33)
+},{}],89:[function(require,module,exports){
 module.exports=require(34)
-},{}],90:[function(require,module,exports){
-module.exports=require(35)
-},{"./foreach":87,"./isArguments":89}],91:[function(require,module,exports){
+},{"./foreach":86,"./isArguments":88}],90:[function(require,module,exports){
 module.exports={
   "name": "levelup",
   "description": "Fast & simple storage - a Node.js-style LevelDB wrapper",
@@ -11318,4 +11340,221 @@ module.exports={
   "_from": "levelup@"
 }
 
-},{}]},{},[])
+},{}],91:[function(require,module,exports){
+(function (process,global){var util              = require('util')
+  , bops              = require('bops')
+  , AbstractLevelDOWN = require('abstract-leveldown').AbstractLevelDOWN
+  , AbstractIterator  = require('abstract-leveldown').AbstractIterator
+  , noop              = function () {}
+  , setImmediate      = global.setImmediate || process.nextTick
+
+function toKey (key) {
+  return typeof key == 'string' ? '$' + key : JSON.stringify(key)
+}
+
+function sortedIndexOf (arr, item) {
+  var low = 0, high = arr.length, mid
+  while (low < high) {
+    mid = (low + high) >>> 1
+    arr[mid] < item ? low = mid + 1 : high = mid
+  }
+  return low
+}
+
+function MemIterator (db, options) {
+  AbstractIterator.call(this, db)
+  this._reverse = options.reverse
+  this._limit   = options.limit
+  this._count   = 0
+  this._end     = options.end
+  this._start   = options.start
+  this._gt      = options.gt
+  this._gte     = options.gte
+  this._lt      = options.lt
+  this._lte     = options.lte
+
+  var i
+
+  if (this._start) {
+    for (i = 0; i < this.db._keys.length; i++) {
+      if (this.db._keys[i] >= this._start) {
+        this._pos = i
+        if (this.db._keys[i] != this._start) {
+          if (this._reverse) {
+            // going backwards and key doesn't match, jump back one
+            --this._pos
+          }
+        } else {
+          if (options.exclusiveStart) {
+            // key matches but it's a gt or lt
+            this._pos += (this._reverse ? -1 : 1)
+          }
+        }
+        break
+      }
+    }
+
+    if (this._pos == null && !this._reverse) // no matching keys, non starter
+      this._pos = -1
+  }
+
+  if (!options.start || !this._pos)
+    this._pos = this._reverse ? this.db._keys.length - 1 : 0
+}
+
+util.inherits(MemIterator, AbstractIterator)
+
+MemIterator.prototype._next = function (callback) {
+  var self  = this
+    , key   = self.db._keys[self._pos]
+    , value
+
+  if (self._pos >= self.db._keys.length || self._pos < 0)
+    return setImmediate(callback)
+
+  if (!!self._end && (self._reverse ? key < self._end : key > self._end))
+    return setImmediate(callback)
+
+
+  if (!!self._limit && self._limit > 0 && self._count++ >= self._limit)
+    return setImmediate(callback)
+
+  if (  (this._lt  && key >= this._lt)
+     || (this._lte && key > this._lte)
+     || (this._gt  && key <= this._gt)
+     || (this._gte && key < this._gte))
+    return setImmediate(callback)
+
+  value = self.db._store[toKey(key)]
+  self._pos += self._reverse ? -1 : 1
+
+  setImmediate(function () { callback(null, key, value) })
+}
+
+function MemDOWN (location) {
+  if (!(this instanceof MemDOWN))
+    return new MemDOWN(location)
+
+  AbstractLevelDOWN.call(this, typeof location == 'string' ? location : '')
+  this._store = {}
+  this._keys  = []
+}
+
+util.inherits(MemDOWN, AbstractLevelDOWN)
+
+MemDOWN.prototype._open = function (options, callback) {
+  var self = this
+  setImmediate(function () { callback(null, self) })
+}
+
+MemDOWN.prototype._put = function (key, value, options, callback) {
+  var ix = sortedIndexOf(this._keys, key)
+  if (this._keys[ix] != key)
+    this._keys.splice(ix, 0, key)
+  key = toKey(key) // safety, to avoid key='__proto__'-type skullduggery 
+  this._store[key] = value
+  setImmediate(callback)
+}
+
+MemDOWN.prototype._get = function (key, options, callback) {
+  var value = this._store[toKey(key)]
+  if (value === undefined) {
+    // 'NotFound' error, consistent with LevelDOWN API
+    return setImmediate(function () { callback(new Error('NotFound')) })
+  }
+  if (options.asBuffer !== false && !bops.is(value))
+    value = bops.from(String(value))
+  setImmediate(function () {
+    callback(null, value)
+  })
+}
+
+MemDOWN.prototype._del = function (key, options, callback) {
+  var ix = sortedIndexOf(this._keys, key)
+  if (this._keys[ix] == key)
+    this._keys.splice(ix, 1)
+  delete this._store[toKey(key)]
+  setImmediate(callback)
+}
+
+MemDOWN.prototype._batch = function (array, options, callback) {
+  var err
+    , i = 0
+    , key
+    , value
+
+  if (Array.isArray(array)) {
+    for (; i < array.length; i++) {
+      if (array[i]) {
+        key = bops.is(array[i].key) ? array[i].key : String(array[i].key)
+        err = this._checkKeyValue(key, 'key')
+        if (err) return setImmediate(function () { callback(err) })
+        if (array[i].type === 'del') {
+          this._del(array[i].key, options, noop)
+        } else if (array[i].type === 'put') {
+          value = bops.is(array[i].value) ? array[i].value : String(array[i].value)
+          err = this._checkKeyValue(value, 'value')
+          if (err) return setImmediate(function () { callback(err) })
+          this._put(key, value, options, noop)
+        }
+      }
+    }
+  }
+  setImmediate(callback)
+}
+
+MemDOWN.prototype._iterator = function (options) {
+  return new MemIterator(this, options)
+}
+
+MemDOWN.prototype._isBuffer = function (obj) {
+  return bops.is(obj)
+}
+
+module.exports = MemDOWN
+}).call(this,require("/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"abstract-leveldown":94,"bops":101,"util":22}],92:[function(require,module,exports){
+module.exports=require(26)
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],93:[function(require,module,exports){
+module.exports=require(27)
+},{"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9}],94:[function(require,module,exports){
+arguments[4][28][0].apply(exports,arguments)
+},{"./abstract-chained-batch":92,"./abstract-iterator":93,"/Users/nick/Dev/github/public/pouchdb.next/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":9,"buffer":10,"xtend":96}],95:[function(require,module,exports){
+module.exports=require(29)
+},{}],96:[function(require,module,exports){
+arguments[4][30][0].apply(exports,arguments)
+},{"./has-keys":95,"object-keys":98}],97:[function(require,module,exports){
+module.exports=require(31)
+},{}],98:[function(require,module,exports){
+arguments[4][32][0].apply(exports,arguments)
+},{"./shim":100}],99:[function(require,module,exports){
+module.exports=require(33)
+},{}],100:[function(require,module,exports){
+module.exports=require(34)
+},{"./foreach":97,"./isArguments":99}],101:[function(require,module,exports){
+arguments[4][43][0].apply(exports,arguments)
+},{"./copy.js":104,"./create.js":105,"./from.js":106,"./is.js":107,"./join.js":108,"./read.js":110,"./subarray.js":111,"./to.js":112,"./write.js":113}],102:[function(require,module,exports){
+module.exports=require(44)
+},{}],103:[function(require,module,exports){
+module.exports=require(45)
+},{}],104:[function(require,module,exports){
+module.exports=require(46)
+},{}],105:[function(require,module,exports){
+module.exports=require(47)
+},{}],106:[function(require,module,exports){
+module.exports=require(48)
+},{"base64-js":102}],107:[function(require,module,exports){
+module.exports=require(49)
+},{}],108:[function(require,module,exports){
+module.exports=require(50)
+},{}],109:[function(require,module,exports){
+module.exports=require(51)
+},{}],110:[function(require,module,exports){
+module.exports=require(52)
+},{"./mapped.js":109}],111:[function(require,module,exports){
+module.exports=require(53)
+},{}],112:[function(require,module,exports){
+module.exports=require(54)
+},{"base64-js":102,"to-utf8":103}],113:[function(require,module,exports){
+module.exports=require(55)
+},{"./mapped.js":109}]},{},[1])

@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "mocha",
-    "build": "mkdir -p ./build && browserify -r ./browser.js:PouchDB -o ./build/pouchdb.js"
+    "build": "mkdir -p ./build && browserify ./browser.js -o ./build/pouchdb.js"
   },
   "author": "Nick Thompson",
   "license": "Apache 2.0",
